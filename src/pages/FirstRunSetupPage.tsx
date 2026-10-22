@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { getSupabase } from '../lib/supabase';
+import { SCHOOL_SETUP_FLAG_KEY } from '../context/AuthContext';
 import { School, MapPin, Clock, ShieldCheck, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
 
 interface FirstRunSetupPageProps {
@@ -51,7 +52,7 @@ export const FirstRunSetupPage: React.FC<FirstRunSetupPageProps> = ({
     }
 
     if (adminPassword.length < 6) {
-      setErrorMsg('Administrator password must be at least 6 characters.');
+      setErrorMsg('Account password must be at least 6 characters.');
       return;
     }
 
@@ -66,46 +67,38 @@ export const FirstRunSetupPage: React.FC<FirstRunSetupPageProps> = ({
       });
 
       if (authErr) throw authErr;
-      const ownerId = authData.user?.id;
-      if (!ownerId) throw new Error('Could not create administrator authentication account.');
+      if (!authData.user) throw new Error('Could not create the school account.');
+      if (!authData.session) {
+        throw new Error(
+          'Email confirmation is required before setup can finish. Confirm the email address, then sign in.'
+        );
+      }
 
-      // 2. Insert or update School Settings
-      const { error: settingsErr } = await supabase.from('school_settings').upsert({
-        school_name: schoolName.trim(),
-        timezone,
-        opening_time: `${openingTime}:00`,
-        closing_time: `${closingTime}:00`,
-        grace_period_minutes: gracePeriod,
-        school_latitude: latitude,
-        school_longitude: longitude,
-        geofence_radius_meters: geofenceRadius,
-        is_configured: true,
+      // 2. Provision the school and owner account atomically via a
+      // SECURITY DEFINER RPC - direct table inserts are blocked by RLS
+      // for freshly created accounts.
+      const { error: setupErr } = await supabase.rpc('complete_school_setup', {
+        p_admin_name: adminName.trim(),
+        p_admin_email: adminEmail.trim(),
+        p_school_name: schoolName.trim(),
+        p_timezone: timezone,
+        p_opening_time: `${openingTime}:00`,
+        p_closing_time: `${closingTime}:00`,
+        p_grace_period_minutes: gracePeriod,
+        p_school_latitude: latitude,
+        p_school_longitude: longitude,
+        p_geofence_radius_meters: geofenceRadius,
       });
 
-      if (settingsErr) throw settingsErr;
+      if (setupErr) throw setupErr;
 
-      // 3. Create Owner Profile
-      const { error: profileErr } = await supabase.from('profiles').upsert({
-        id: ownerId,
-        full_name: adminName.trim(),
-        email: adminEmail.trim(),
-        role: 'owner',
-        account_status: 'active',
-      });
-
-      if (profileErr) throw profileErr;
-
-      // 4. Log setup audit record
-      await supabase.from('audit_logs').insert({
-        actor_profile_id: ownerId,
-        action: 'INITIAL_SCHOOL_SETUP_COMPLETED',
-        entity_type: 'school_settings',
-        safe_metadata: {
-          school_name: schoolName,
-          opening_time: openingTime,
-          closing_time: closingTime,
-        },
-      });
+      // 3. Remember on this device that setup is complete (hides the setup
+      // link on the login page even if the public RPC is unavailable)
+      try {
+        localStorage.setItem(SCHOOL_SETUP_FLAG_KEY, '1');
+      } catch {
+        /* storage unavailable - ignore */
+      }
 
       onSetupComplete();
     } catch (err: any) {
@@ -125,7 +118,7 @@ export const FirstRunSetupPage: React.FC<FirstRunSetupPageProps> = ({
           </div>
           <h1 className="mt-3 text-2xl font-bold text-[#202124]">School Initial Setup</h1>
           <p className="mt-1 text-xs text-[#667085]">
-            Configure your school's official timetable, geofence, and provision the School Owner / Administrator account.
+            Configure your school's official timetable, geofence, and account details.
           </p>
         </div>
 
@@ -258,11 +251,11 @@ export const FirstRunSetupPage: React.FC<FirstRunSetupPageProps> = ({
             </div>
           </div>
 
-          {/* Section 3: Administrator Account */}
+          {/* Section 3: School Account */}
           <div>
             <h3 className="text-sm font-bold text-[#202124] border-b border-[#E5E7EB] pb-2 flex items-center gap-1.5">
               <ShieldCheck className="w-4 h-4 text-[#C62828]" />
-              <span>3. School Owner / Administrator Account</span>
+              <span>3. School Account Details</span>
             </h3>
 
             <div className="mt-3 space-y-3">
@@ -280,11 +273,11 @@ export const FirstRunSetupPage: React.FC<FirstRunSetupPageProps> = ({
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block font-semibold text-[#202124] mb-1">Administrator Email</label>
+                  <label className="block font-semibold text-[#202124] mb-1">Account Email</label>
                   <input
                     type="email"
                     required
-                    placeholder="admin@school.edu.gh"
+                    placeholder="school@school.edu.gh"
                     value={adminEmail}
                     onChange={(e) => setAdminEmail(e.target.value)}
                     className="w-full rounded-lg border border-[#E5E7EB] px-3 py-2 text-[#202124]"

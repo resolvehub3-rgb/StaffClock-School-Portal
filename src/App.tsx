@@ -53,24 +53,26 @@ function AppContent() {
 
   const viewParam = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('view') : null;
 
+  // Invitation activation takes priority: a teacher opening an ?activate=
+  // link must land on the activation page even if a session already exists
+  if (currentView === 'activate') {
+    return (
+      <>
+        <TeacherActivationPage
+          initialToken={activationToken}
+          onActivated={() => {
+            // Clear URL query param
+            window.history.replaceState({}, document.title, window.location.pathname);
+          }}
+          onGoToLogin={() => setCurrentView('login')}
+        />
+        <OfflineIndicator />
+      </>
+    );
+  }
+
   // Not authenticated flows
   if (!user && !viewParam) {
-    if (currentView === 'activate') {
-      return (
-        <>
-          <TeacherActivationPage
-            initialToken={activationToken}
-            onActivated={() => {
-              // Clear URL query param
-              window.history.replaceState({}, document.title, window.location.pathname);
-            }}
-            onGoToLogin={() => setCurrentView('login')}
-          />
-          <OfflineIndicator />
-        </>
-      );
-    }
-
     if (currentView === 'setup') {
       return (
         <>
@@ -100,17 +102,8 @@ function AppContent() {
         <LoginPage
           onGoToActivation={() => setCurrentView('activate')}
           onGoToSetup={() => setCurrentView('setup')}
-          onOpenSupabaseConfig={() => setIsSupabaseModalOpen(true)}
         />
         <OfflineIndicator />
-        <SupabaseConfigModal
-          isOpen={isSupabaseModalOpen}
-          onClose={() => setIsSupabaseModalOpen(false)}
-          onConfigSaved={() => {
-            refreshSettings();
-            refreshProfile();
-          }}
-        />
       </>
     );
   }

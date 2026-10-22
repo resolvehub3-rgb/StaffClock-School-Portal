@@ -1,19 +1,17 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { School, Lock, Mail, ArrowRight, AlertCircle, Loader2, Key, Database } from 'lucide-react';
+import { School, Lock, Mail, ArrowRight, AlertCircle, Loader2, Key } from 'lucide-react';
 
 interface LoginPageProps {
   onGoToActivation: () => void;
   onGoToSetup?: () => void;
-  onOpenSupabaseConfig?: () => void;
 }
 
 export const LoginPage: React.FC<LoginPageProps> = ({
   onGoToActivation,
   onGoToSetup,
-  onOpenSupabaseConfig,
 }) => {
-  const { signIn, schoolSettings, isSupabaseConnected } = useAuth();
+  const { signIn, schoolSettings, isSchoolConfigured } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -126,7 +124,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                 <span>Have an Invite Link? Activate Account</span>
               </button>
 
-              {onGoToSetup && (
+              {onGoToSetup && isSchoolConfigured === false && (
                 <div className="pt-2">
                   <button
                     type="button"
@@ -134,21 +132,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                     className="text-[11px] font-medium text-[#667085] hover:text-[#C62828]"
                   >
                     School Administrator First-Time Setup →
-                  </button>
-                </div>
-              )}
-
-              {onOpenSupabaseConfig && (
-                <div className="pt-1">
-                  <button
-                    type="button"
-                    onClick={onOpenSupabaseConfig}
-                    className="inline-flex items-center gap-1 text-[11px] font-medium text-[#667085] hover:text-[#202124]"
-                  >
-                    <Database className="w-3 h-3 text-[#C62828]" />
-                    <span>
-                      {isSupabaseConnected ? 'Supabase Project Connected' : 'Configure Supabase Connection'}
-                    </span>
                   </button>
                 </div>
               )}

@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { getSupabase } from '../lib/supabase';
-import { UserPlus, Copy, Check, X, Link, Mail, Loader2 } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
+import { UserPlus, Copy, Check, X, Link, Mail, Loader2, RefreshCw, MessageCircle, Share2 } from 'lucide-react';
 import { SchoolClass } from '../types/database';
 
 interface InviteTeacherModalProps {
@@ -26,6 +27,74 @@ export const InviteTeacherModal: React.FC<InviteTeacherModalProps> = ({
 
   const [generatedInviteLink, setGeneratedInviteLink] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [isSuggesting, setIsSuggesting] = useState(false);
+
+  const { schoolSettings } = useAuth();
+
+  // Build the next Staff ID from the school's initials, e.g. school
+  // "Vps Primary School" -> vps001, vps002, ... Sequence is the highest
+  // existing number with the same prefix (teachers + pending invitations) + 1.
+  const buildStaffNumberSuggestion = useCallback(async (): Promise<string> => {
+    const supabase = getSupabase();
+    const initials =
+      (schoolSettings?.school_name || '')
+        .trim()
+        .split(/\s+/)
+        .map((word) => word.charAt(0))
+        .join('')
+        .toLowerCase()
+        .replace(/[^a-z]/g, '') || 'stf';
+
+    let maxSequence = 0;
+    const pattern = new RegExp(`^${initials}(\\d+)$`, 'i');
+    const scan = (rows: { staff_number?: string | null }[] | null | undefined) => {
+      (rows || []).forEach((row) => {
+        const match = (row.staff_number || '').match(pattern);
+        if (match) {
+          const seq = parseInt(match[1], 10);
+          if (!Number.isNaN(seq) && seq > maxSequence) maxSequence = seq;
+        }
+      });
+    };
+
+    if (supabase) {
+      try {
+        const [teachersRes, invitationsRes] = await Promise.all([
+          supabase.from('teachers').select('staff_number'),
+          supabase.from('teacher_invitations').select('staff_number'),
+        ]);
+        scan(teachersRes.data);
+        scan(invitationsRes.data);
+      } catch (err) {
+        console.warn('Could not scan existing staff numbers:', err);
+      }
+    }
+
+    return `${initials}${String(maxSequence + 1).padStart(3, '0')}`;
+  }, [schoolSettings?.school_name]);
+
+  // Auto-fill the Staff ID when the form opens (or resets)
+  useEffect(() => {
+    if (!isOpen || generatedInviteLink) return;
+    let cancelled = false;
+    (async () => {
+      setIsSuggesting(true);
+      const suggestion = await buildStaffNumberSuggestion();
+      if (cancelled) return;
+      setStaffNumber((prev) => prev || suggestion);
+      setIsSuggesting(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, generatedInviteLink, buildStaffNumberSuggestion]);
+
+  const handleRegenerateStaffNumber = async () => {
+    setIsSuggesting(true);
+    const suggestion = await buildStaffNumberSuggestion();
+    setStaffNumber(suggestion);
+    setIsSuggesting(false);
+  };
 
   if (!isOpen) return null;
 
@@ -42,19 +111,29 @@ export const InviteTeacherModal: React.FC<InviteTeacherModalProps> = ({
       // Generate high-entropy token
       const token = (Math.random().toString(36).substring(2) + Math.random().toString(36).substring(2)).toUpperCase();
 
-      const { data, error } = await supabase
-        .from('teacher_invitations')
-        .insert({
-          email: email.trim().toLowerCase(),
-          full_name: fullName.trim(),
-          staff_number: staffNumber.trim().toUpperCase(),
-          role,
-          class_id: classId || null,
-          token,
-          created_by: user?.id || null,
-        })
-        .select()
-        .single();
+      const insertInvitation = async (staffNum: string) =>
+        supabase
+          .from('teacher_invitations')
+          .insert({
+            email: email.trim().toLowerCase(),
+            full_name: fullName.trim(),
+            staff_number: staffNum,
+            role,
+            class_id: classId || null,
+            token,
+            created_by: user?.id || null,
+          })
+          .select()
+          .single();
+
+      let { error } = await insertInvitation(staffNumber.trim());
+
+      // Unique collision (another invite took this number): regenerate once
+      if (error && error.code === '23505') {
+        const freshNumber = await buildStaffNumberSuggestion();
+        setStaffNumber(freshNumber);
+        ({ error } = await insertInvitation(freshNumber));
+      }
 
       if (error) {
         throw error;
@@ -74,11 +153,36 @@ export const InviteTeacherModal: React.FC<InviteTeacherModalProps> = ({
 
   const handleCopyLink = () => {
     if (generatedInviteLink) {
-      navigator.clipboard.writeText(generatedInviteLink);
+      navigator.clipboard.writeText(generatedInviteLink.trim());
       setCopied(true);
       setTimeout(() => setCopied(false), 3000);
     }
   };
+
+  // Native share sheet (mobile) - the most reliable way for the link to
+  // arrive as a tappable link in WhatsApp / SMS / email
+  const handleShareLink = async () => {
+    if (!generatedInviteLink) return;
+    try {
+      if (navigator.share) {
+        await navigator.share({
+          title: 'Staff Account Activation',
+          text: `Hi ${fullName || 'there'}, your staff activation link:`,
+          url: generatedInviteLink.trim(),
+        });
+      } else {
+        window.open(whatsAppUrl, '_blank');
+      }
+    } catch {
+      /* user closed the share sheet */
+    }
+  };
+
+  const whatsAppUrl = `https://wa.me/?text=${encodeURIComponent(
+    `Hi ${fullName || 'there'}, your staff activation link: ${generatedInviteLink?.trim() || ''}`
+  )}`;
+
+  const canShare = typeof navigator !== 'undefined' && typeof navigator.share === 'function';
 
   const handleReset = () => {
     setEmail('');
@@ -132,32 +236,59 @@ export const InviteTeacherModal: React.FC<InviteTeacherModalProps> = ({
                 <label className="block font-semibold text-[#202124] mb-1">
                   Manual Activation Link
                 </label>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    readOnly
-                    value={generatedInviteLink}
-                    className="w-full rounded-lg border border-[#E5E7EB] bg-gray-50 px-3 py-2 text-[#202124] text-[11px] font-mono select-all"
-                  />
-                  <button
-                    onClick={handleCopyLink}
-                    className="flex items-center gap-1 rounded-lg bg-[#C62828] px-3.5 py-2 font-bold text-white hover:bg-[#8E1B1B] transition whitespace-nowrap"
+                <div className="space-y-2">
+                  <a
+                    href={generatedInviteLink}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title="Click to open this activation link"
+                    className="block w-full truncate rounded-lg border border-[#E5E7EB] bg-gray-50 px-3 py-2 text-[11px] font-mono text-[#C62828] select-all hover:bg-gray-100 hover:underline"
                   >
-                    {copied ? (
-                      <>
-                        <Check className="w-3.5 h-3.5" />
-                        <span>Copied!</span>
-                      </>
-                    ) : (
-                      <>
-                        <Copy className="w-3.5 h-3.5" />
-                        <span>Copy Link</span>
-                      </>
+                    {generatedInviteLink}
+                  </a>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      onClick={handleCopyLink}
+                      className="flex items-center gap-1 rounded-lg bg-[#C62828] px-3.5 py-2 font-bold text-white hover:bg-[#8E1B1B] transition whitespace-nowrap"
+                    >
+                      {copied ? (
+                        <>
+                          <Check className="w-3.5 h-3.5" />
+                          <span>Copied!</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3.5 h-3.5" />
+                          <span>Copy Link</span>
+                        </>
+                      )}
+                    </button>
+
+                    <a
+                      href={whatsAppUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-3.5 py-2 font-bold text-emerald-800 hover:bg-emerald-100 transition whitespace-nowrap"
+                    >
+                      <MessageCircle className="w-3.5 h-3.5" />
+                      <span>WhatsApp</span>
+                    </a>
+
+                    {canShare && (
+                      <button
+                        onClick={handleShareLink}
+                        className="flex items-center gap-1.5 rounded-lg border border-[#E5E7EB] bg-white px-3.5 py-2 font-semibold text-[#202124] hover:bg-gray-50 transition whitespace-nowrap"
+                      >
+                        <Share2 className="w-3.5 h-3.5 text-[#C62828]" />
+                        <span>Share</span>
+                      </button>
                     )}
-                  </button>
+                  </div>
                 </div>
                 <p className="text-[11px] text-[#667085] mt-1.5">
-                  The teacher can click this link anytime (during or after school hours) to activate their account and set their password.
+                  <strong>On mobile, use Share or WhatsApp</strong> — some messaging apps don't detect a plain
+                  pasted URL as a link. Share/WhatsApp always deliver it as a tappable link.
                 </p>
               </div>
 
@@ -216,14 +347,28 @@ export const InviteTeacherModal: React.FC<InviteTeacherModalProps> = ({
                   <label className="block font-semibold text-[#202124] mb-1">
                     Staff ID Number <span className="text-[#C62828]">*</span>
                   </label>
-                  <input
-                    type="text"
-                    required
-                    value={staffNumber}
-                    onChange={(e) => setStaffNumber(e.target.value)}
-                    placeholder="e.g. TCH-042"
-                    className="w-full rounded-lg border border-[#E5E7EB] px-3 py-2 text-[#202124] focus:outline-none focus:ring-2 focus:ring-[#C62828]"
-                  />
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="text"
+                      required
+                      value={staffNumber}
+                      onChange={(e) => setStaffNumber(e.target.value)}
+                      placeholder="e.g. vps001"
+                      className="w-full rounded-lg border border-[#E5E7EB] px-3 py-2 font-mono text-[#202124] focus:outline-none focus:ring-2 focus:ring-[#C62828]"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleRegenerateStaffNumber}
+                      disabled={isSuggesting}
+                      title="Auto-generate next Staff ID"
+                      className="shrink-0 rounded-lg border border-[#E5E7EB] bg-gray-50 p-2 text-[#C62828] hover:bg-gray-100 disabled:opacity-50"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${isSuggesting ? 'animate-spin' : ''}`} />
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-[#667085] mt-1">
+                    Auto-generated from school initials (e.g. vps001) — editable if needed.
+                  </p>
                 </div>
               </div>
 

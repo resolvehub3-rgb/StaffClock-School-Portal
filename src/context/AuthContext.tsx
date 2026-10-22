@@ -9,6 +9,7 @@ interface AuthContextType {
   profile: Profile | null;
   teacherRecord: Teacher | null;
   schoolSettings: SchoolSettings | null;
+  isSchoolConfigured: boolean | null;
   role: UserRole | null;
   activeRoleView: UserRole | null;
   setActiveRoleView: (role: UserRole) => void;
@@ -24,12 +25,17 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+// Local flag written when first-time setup completes on this device.
+// Used as a fallback when the public setup-status RPC is unavailable.
+export const SCHOOL_SETUP_FLAG_KEY = 'staffclock_school_setup_complete';
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [teacherRecord, setTeacherRecord] = useState<Teacher | null>(null);
   const [schoolSettings, setSchoolSettings] = useState<SchoolSettings | null>(null);
+  const [isSchoolConfigured, setIsSchoolConfigured] = useState<boolean | null>(null);
   const [activeRoleView, setActiveRoleView] = useState<UserRole | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -53,6 +59,31 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     } catch (err) {
       console.error('Error fetching school settings:', err);
+    }
+  }, [supabase]);
+
+  // Pre-login check: has the school been set up (settings configured or an
+  // owner account created)? Uses the security-definer RPC
+  // get_public_school_info (migration 20261022000001) because school_settings
+  // and profiles are not readable before authentication. Falls back to a
+  // local flag set when setup completes on this device. Stays null when the
+  // status cannot be determined.
+  const fetchSchoolSetupStatus = useCallback(async () => {
+    if (!supabase) return;
+    try {
+      const { data, error } = await supabase.rpc('get_public_school_info');
+      if (!error) {
+        const row = Array.isArray(data) ? data[0] : data;
+        setIsSchoolConfigured(!!row && (!!row.is_configured || row.has_accounts === true));
+        return;
+      }
+      console.warn('School setup status RPC unavailable:', error.message);
+    } catch (err) {
+      console.warn('School setup status check failed:', err);
+    }
+    // Fallback: local flag written when setup completes on this device
+    if (typeof localStorage !== 'undefined' && localStorage.getItem(SCHOOL_SETUP_FLAG_KEY) === '1') {
+      setIsSchoolConfigured(true);
     }
   }, [supabase]);
 
@@ -144,6 +175,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setUser(sessionData?.session?.user || null);
 
         await fetchSchoolSettings();
+        await fetchSchoolSetupStatus();
 
         if (sessionData?.session?.user) {
           await fetchProfileAndTeacher(sessionData.session.user.id);
@@ -193,7 +225,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       authListener?.subscription?.unsubscribe();
       supabase.removeChannel(settingsChannel);
     };
-  }, [supabase, fetchSchoolSettings, fetchProfileAndTeacher]);
+  }, [supabase, fetchSchoolSettings, fetchSchoolSetupStatus, fetchProfileAndTeacher]);
 
   const signIn = async (email: string, password: string) => {
     if (!supabase) return { error: new Error('Supabase client not initialized') };
@@ -234,7 +266,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const refreshSettings = async () => {
-    await fetchSchoolSettings();
+    await Promise.all([fetchSchoolSettings(), fetchSchoolSetupStatus()]);
   };
 
   const updateSchoolSettings = async (updated: Partial<SchoolSettings>) => {
@@ -273,6 +305,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         profile,
         teacherRecord,
         schoolSettings,
+        isSchoolConfigured,
         role: profile?.role || null,
         activeRoleView: activeRoleView || profile?.role || null,
         setActiveRoleView,

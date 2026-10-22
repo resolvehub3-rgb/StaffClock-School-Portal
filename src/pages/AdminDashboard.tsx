@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { getSupabase } from '../lib/supabase';
-import { AttendanceSession, Teacher, SchoolClass, AuditLogItem } from '../types/database';
+import { AttendanceSession, Teacher, SchoolClass, AuditLogItem, TeacherInvitation } from '../types/database';
 import { calculateAttendanceMetrics, generateCsvContent, AttendanceRecordExport } from '../utils/reports';
 import { InviteTeacherModal } from '../components/InviteTeacherModal';
 import { EvidenceReviewModal } from '../components/EvidenceReviewModal';
@@ -28,13 +28,40 @@ import {
   UserX,
   UserCheck,
   Check,
+  Copy,
+  Share2,
+  LayoutDashboard,
+  Radio,
+  FileDown,
+  ShieldCheck,
+  Menu,
+  X,
 } from 'lucide-react';
+
+type AdminTabId = 'overview' | 'attendance' | 'teachers' | 'classes' | 'reports' | 'settings' | 'audit';
+
+interface NavItem {
+  id: AdminTabId;
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+}
+
+const NAV_ITEMS: NavItem[] = [
+  { id: 'overview', label: 'Overview & Stats', icon: LayoutDashboard },
+  { id: 'attendance', label: 'Live Attendance Monitor', icon: Radio },
+  { id: 'teachers', label: 'Teacher Staff List', icon: Users },
+  { id: 'classes', label: 'Class Management', icon: GraduationCap },
+  { id: 'reports', label: 'Reports & Export', icon: FileDown },
+  { id: 'settings', label: 'School Settings', icon: Settings },
+  { id: 'audit', label: 'Audit Trail', icon: ShieldCheck },
+];
 
 export const AdminDashboard: React.FC = () => {
   const { schoolSettings, updateSchoolSettings } = useAuth();
   const supabase = getSupabase();
 
-  const [activeTab, setActiveTab] = useState<'overview' | 'attendance' | 'teachers' | 'classes' | 'settings' | 'reports' | 'audit'>('overview');
+  const [activeTab, setActiveTab] = useState<AdminTabId>('overview');
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   // Operational Data
   const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().split('T')[0]);
@@ -42,6 +69,8 @@ export const AdminDashboard: React.FC = () => {
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [classes, setClasses] = useState<SchoolClass[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLogItem[]>([]);
+  const [pendingInvites, setPendingInvites] = useState<TeacherInvitation[]>([]);
+  const [copiedToken, setCopiedToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -169,6 +198,19 @@ export const AdminDashboard: React.FC = () => {
         .limit(30);
 
       setAuditLogs((auditData as AuditLogItem[]) || []);
+
+      // 5. Fetch pending invitations (sent, not yet activated)
+      const { data: inviteData, error: inviteErr } = await supabase
+        .from('teacher_invitations')
+        .select('*, class:classes(class_name)')
+        .is('used_at', null)
+        .order('created_at', { ascending: false });
+
+      if (inviteErr) {
+        console.warn('Could not load pending invitations:', inviteErr);
+      } else {
+        setPendingInvites((inviteData as TeacherInvitation[]) || []);
+      }
     } catch (err: any) {
       console.error('Error loading admin data:', err);
       setErrorMsg(err.message || 'Failed to load records from Supabase');
@@ -180,13 +222,29 @@ export const AdminDashboard: React.FC = () => {
   useEffect(() => {
     loadData();
 
-    // Supabase Realtime Subscription for Live Updates
+    // Supabase Realtime Subscription for Live Updates:
+    // attendance changes, teachers activating their invites, and
+    // invitations being created all refresh the dashboard immediately
     if (supabase) {
       const channel = supabase
         .channel('admin-live-updates')
         .on(
           'postgres_changes',
           { event: '*', schema: 'public', table: 'attendance_sessions' },
+          () => {
+            loadData();
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'teachers' },
+          () => {
+            loadData();
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'teacher_invitations' },
           () => {
             loadData();
           }
@@ -237,6 +295,35 @@ export const AdminDashboard: React.FC = () => {
       await loadData();
     } catch (err: any) {
       console.error('Toggle status error:', err);
+    }
+  };
+
+  // Copy a pending invitation's activation link for manual sharing
+  const handleCopyInviteLink = (token: string) => {
+    navigator.clipboard
+      ?.writeText(`${window.location.origin}/?activate=${token}`)
+      .then(() => {
+        setCopiedToken(token);
+        setTimeout(() => setCopiedToken((prev) => (prev === token ? null : prev)), 2500);
+      })
+      .catch(() => {
+        alert(`Copy this link:\n${window.location.origin}/?activate=${token}`);
+      });
+  };
+
+  // Share a pending invitation's activation link - native share sheet on
+  // mobile, WhatsApp fallback elsewhere, so it always arrives as a
+  // tappable link (plain pasted URLs are often not linkified)
+  const handleShareInvite = async (token: string) => {
+    const url = `${window.location.origin}/?activate=${token}`;
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: 'Staff Account Activation', url });
+      } catch {
+        /* user closed the share sheet */
+      }
+    } else {
+      window.open(`https://wa.me/?text=${encodeURIComponent(url)}`, '_blank');
     }
   };
 
@@ -324,38 +411,64 @@ export const AdminDashboard: React.FC = () => {
     document.body.removeChild(link);
   };
 
+  const activeNav = NAV_ITEMS.find((item) => item.id === activeTab) || NAV_ITEMS[0];
+  const ActiveNavIcon = activeNav.icon;
+
+  const renderNavItems = (onNavigate?: () => void) =>
+    NAV_ITEMS.map((item) => {
+      const Icon = item.icon;
+      const isActive = activeTab === item.id;
+      return (
+        <button
+          key={item.id}
+          onClick={() => {
+            setActiveTab(item.id);
+            onNavigate?.();
+          }}
+          className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left text-xs font-semibold transition ${
+            isActive
+              ? 'bg-[#C62828] text-white shadow-xs'
+              : 'text-[#667085] hover:bg-gray-100 hover:text-[#202124]'
+          }`}
+        >
+          <Icon className={`h-4 w-4 shrink-0 ${isActive ? 'text-white' : 'text-[#C62828]'}`} />
+          <span className="leading-tight">{item.label}</span>
+        </button>
+      );
+    });
+
   return (
     <div className="min-h-[calc(100vh-64px)] bg-[#F8F8F8] pb-12">
-      {/* Navigation Sub-Header */}
-      <div className="bg-white border-b border-[#E5E7EB]">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6">
-          <div className="flex overflow-x-auto space-x-1 py-2 text-xs font-semibold scrollbar-none">
-            {[
-              { id: 'overview', label: 'Overview & Stats' },
-              { id: 'attendance', label: 'Live Attendance Monitor' },
-              { id: 'teachers', label: 'Teacher Staff List' },
-              { id: 'classes', label: 'Class Management' },
-              { id: 'reports', label: 'Reports & Export' },
-              { id: 'settings', label: 'School Settings' },
-              { id: 'audit', label: 'Audit Trail' },
-            ].map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id as any)}
-                className={`px-3 py-2 rounded-lg transition whitespace-nowrap ${
-                  activeTab === tab.id
-                    ? 'bg-[#C62828] text-white shadow-xs'
-                    : 'text-[#667085] hover:text-[#202124] hover:bg-gray-100'
-                }`}
-              >
-                {tab.label}
-              </button>
-            ))}
+      {/* Mobile Section Bar with Menu Toggle */}
+      <div className="sticky top-16 z-30 border-b border-[#E5E7EB] bg-white lg:hidden">
+        <div className="flex items-center justify-between px-4 py-2.5">
+          <div className="flex min-w-0 items-center gap-2">
+            <ActiveNavIcon className="h-4 w-4 shrink-0 text-[#C62828]" />
+            <span className="truncate text-sm font-bold text-[#202124]">{activeNav.label}</span>
           </div>
+          <button
+            onClick={() => setIsSidebarOpen((open) => !open)}
+            className="flex items-center gap-1.5 rounded-lg border border-[#E5E7EB] bg-white px-2.5 py-1.5 text-xs font-semibold text-[#202124] shadow-xs hover:bg-gray-50"
+            aria-label="Toggle navigation menu"
+            aria-expanded={isSidebarOpen}
+          >
+            {isSidebarOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
+            <span>Menu</span>
+          </button>
         </div>
       </div>
 
-      <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 space-y-6">
+      <div className="mx-auto flex w-full max-w-7xl sm:px-4 lg:gap-6 lg:px-6">
+        {/* Desktop Sidebar */}
+        <aside className="hidden w-60 shrink-0 lg:block">
+          <div className="sticky top-[80px] py-6">
+            <nav className="space-y-0.5 rounded-2xl border border-[#E5E7EB] bg-white p-2 shadow-xs">
+              {renderNavItems()}
+            </nav>
+          </div>
+        </aside>
+
+        <main className="min-w-0 flex-1 space-y-6 px-4 py-6 sm:px-0">
         {/* Error Notice */}
         {errorMsg && (
           <div className="rounded-xl bg-red-50 border border-red-300 p-3.5 text-xs text-[#B91C1C] flex items-center justify-between">
@@ -757,7 +870,7 @@ export const AdminDashboard: React.FC = () => {
             </div>
 
             <div className="rounded-2xl bg-white border border-[#E5E7EB] shadow-xs overflow-hidden">
-              {teachers.length === 0 ? (
+              {teachers.length === 0 && pendingInvites.length === 0 ? (
                 <div className="py-12 text-center text-xs text-[#667085]">
                   <Users className="mx-auto w-8 h-8 text-gray-300 mb-2" />
                   <p className="font-bold text-[#202124]">No teachers enrolled yet.</p>
@@ -820,6 +933,51 @@ export const AdminDashboard: React.FC = () => {
                                 <UserCheck className="w-4 h-4" />
                               )}
                             </button>
+                          </td>
+                        </tr>
+                      ))}
+
+                      {/* Pending invitations: sent but not yet activated */}
+                      {pendingInvites.map((invite) => (
+                        <tr key={`invite-${invite.id}`} className="bg-amber-50/50 hover:bg-amber-50">
+                          <td className="py-3 px-4 font-bold text-[#202124]">
+                            {invite.full_name}
+                          </td>
+                          <td className="py-3 px-3 font-mono text-[#667085]">
+                            {invite.staff_number}
+                          </td>
+                          <td className="py-3 px-3 text-[#667085]">
+                            {invite.email}
+                          </td>
+                          <td className="py-3 px-3 text-[#202124]">
+                            {invite.class?.class_name || 'Unassigned'}
+                          </td>
+                          <td className="py-3 px-3">
+                            <span
+                              className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800"
+                              title={`Invite expires ${new Date(invite.expires_at).toLocaleString()}`}
+                            >
+                              INVITED — PENDING
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 text-right">
+                            <div className="inline-flex items-center gap-1.5">
+                              <button
+                                onClick={() => handleCopyInviteLink(invite.token)}
+                                className="inline-flex items-center gap-1 rounded-md border border-[#E5E7EB] bg-white px-2 py-1 text-[11px] font-medium text-[#202124] hover:bg-gray-50"
+                                title="Copy activation link to send to this staff member"
+                              >
+                                <Copy className="w-3 h-3 text-[#C62828]" />
+                                <span>{copiedToken === invite.token ? 'Copied!' : 'Copy Link'}</span>
+                              </button>
+                              <button
+                                onClick={() => handleShareInvite(invite.token)}
+                                className="inline-flex items-center rounded-md border border-emerald-300 bg-emerald-50 px-2 py-1 text-[11px] font-medium text-emerald-800 hover:bg-emerald-100"
+                                title="Send as a tappable link (share sheet / WhatsApp)"
+                              >
+                                <Share2 className="w-3 h-3" />
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       ))}
@@ -1198,6 +1356,31 @@ export const AdminDashboard: React.FC = () => {
           </div>
         )}
       </main>
+      </div>
+
+      {/* Mobile Sidebar Drawer */}
+      {isSidebarOpen && (
+        <div className="fixed inset-0 z-50 lg:hidden">
+          <div
+            className="absolute inset-0 bg-black/40"
+            onClick={() => setIsSidebarOpen(false)}
+            aria-hidden="true"
+          />
+          <div className="absolute left-0 top-0 h-full w-72 max-w-[85vw] overflow-y-auto bg-white p-4 shadow-2xl">
+            <div className="mb-3 flex items-center justify-between border-b border-[#E5E7EB] pb-3">
+              <span className="text-sm font-bold text-[#202124]">Admin Menu</span>
+              <button
+                onClick={() => setIsSidebarOpen(false)}
+                className="rounded-lg p-1.5 text-[#667085] hover:bg-gray-100 hover:text-[#202124]"
+                aria-label="Close navigation menu"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <nav className="space-y-0.5">{renderNavItems(() => setIsSidebarOpen(false))}</nav>
+          </div>
+        </div>
+      )}
 
       {/* Modals */}
       <InviteTeacherModal

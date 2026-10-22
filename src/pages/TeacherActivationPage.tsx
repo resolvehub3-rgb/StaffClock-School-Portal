@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { getSupabase } from '../lib/supabase';
 import { TeacherInvitation, SchoolSettings } from '../types/database';
-import { ShieldCheck, CheckCircle2, AlertCircle, Key, Lock, ArrowRight, Loader2, School } from 'lucide-react';
+import { ShieldCheck, CheckCircle2, AlertCircle, Key, Lock, ArrowRight, Loader2, School, User } from 'lucide-react';
 
 interface TeacherActivationPageProps {
   initialToken?: string;
@@ -20,6 +20,7 @@ export const TeacherActivationPage: React.FC<TeacherActivationPageProps> = ({
   const [invitation, setInvitation] = useState<TeacherInvitation | null>(null);
   const [schoolSettings, setSchoolSettings] = useState<SchoolSettings | null>(null);
   const [isValidatingToken, setIsValidatingToken] = useState<boolean>(true);
+  const [fullName, setFullName] = useState<string>('');
   const [password, setPassword] = useState<string>('');
   const [confirmPassword, setConfirmPassword] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
@@ -65,7 +66,10 @@ export const TeacherActivationPage: React.FC<TeacherActivationPageProps> = ({
           throw new Error('This invitation link has expired. Please request a new invite from the school administrator.');
         }
 
-        if (isMounted) setInvitation(invData as TeacherInvitation);
+        if (isMounted) {
+          setInvitation(invData as TeacherInvitation);
+          setFullName((invData as TeacherInvitation).full_name || '');
+        }
       } catch (err: any) {
         if (isMounted) setErrorMsg(err.message || 'Invalid activation link');
       } finally {
@@ -82,6 +86,12 @@ export const TeacherActivationPage: React.FC<TeacherActivationPageProps> = ({
   const handleActivateAccount = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!supabase || !invitation) return;
+
+    const trimmedName = fullName.trim();
+    if (!trimmedName) {
+      setErrorMsg('Please enter your full name.');
+      return;
+    }
 
     if (password.length < 6) {
       setErrorMsg('Password must be at least 6 characters long.');
@@ -103,6 +113,8 @@ export const TeacherActivationPage: React.FC<TeacherActivationPageProps> = ({
         password: password,
       });
 
+      let activatedUserId: string | null = null;
+
       if (authErr) {
         // If user already exists in auth, attempt sign-in or password update
         if (authErr.message.includes('already registered')) {
@@ -114,16 +126,19 @@ export const TeacherActivationPage: React.FC<TeacherActivationPageProps> = ({
             throw new Error('An account with this email exists. Please use your existing password or reset it.');
           }
           if (signInData.user) {
-            await supabase.rpc('activate_teacher_invitation', {
+            activatedUserId = signInData.user.id;
+            const { error: rpcErr } = await supabase.rpc('activate_teacher_invitation', {
               p_token: invitation.token,
               p_user_id: signInData.user.id,
             });
+            if (rpcErr) throw rpcErr;
           }
         } else {
           throw authErr;
         }
       } else if (authData.user) {
         // 2. Call activation RPC
+        activatedUserId = authData.user.id;
         const { error: rpcErr } = await supabase.rpc('activate_teacher_invitation', {
           p_token: invitation.token,
           p_user_id: authData.user.id,
@@ -134,7 +149,7 @@ export const TeacherActivationPage: React.FC<TeacherActivationPageProps> = ({
           // Fallback direct table updates if RPC lacks grant in this environment
           await supabase.from('profiles').upsert({
             id: authData.user.id,
-            full_name: invitation.full_name,
+            full_name: trimmedName,
             email: invitation.email,
             role: invitation.role,
             account_status: 'active',
@@ -153,6 +168,16 @@ export const TeacherActivationPage: React.FC<TeacherActivationPageProps> = ({
             .update({ used_at: new Date().toISOString() })
             .eq('id', invitation.id);
         }
+      }
+
+      // 3. Apply the full name entered by the teacher - the invited name is
+      // only the default, and updating your own profile is allowed by RLS
+      if (activatedUserId && trimmedName !== invitation.full_name) {
+        const { error: nameErr } = await supabase
+          .from('profiles')
+          .update({ full_name: trimmedName, updated_at: new Date().toISOString() })
+          .eq('id', activatedUserId);
+        if (nameErr) console.warn('Could not apply entered name:', nameErr);
       }
 
       setIsSuccess(true);
@@ -249,7 +274,7 @@ export const TeacherActivationPage: React.FC<TeacherActivationPageProps> = ({
             <form onSubmit={handleActivateAccount} className="space-y-4 text-xs">
               <div className="rounded-xl bg-gray-50 p-3.5 border border-[#E5E7EB] space-y-1">
                 <div className="flex justify-between">
-                  <span className="text-[#667085]">Staff Name:</span>
+                  <span className="text-[#667085]">Invited As:</span>
                   <span className="font-bold text-[#202124]">{invitation.full_name}</span>
                 </div>
                 <div className="flex justify-between">
@@ -266,6 +291,23 @@ export const TeacherActivationPage: React.FC<TeacherActivationPageProps> = ({
                     <span className="font-semibold text-[#202124]">{invitation.class.class_name}</span>
                   </div>
                 )}
+              </div>
+
+              <div>
+                <label className="block font-semibold text-[#202124] mb-1">
+                  Your Full Name <span className="text-[#C62828]">*</span>
+                </label>
+                <div className="relative">
+                  <User className="absolute left-2.5 top-2.5 w-3.5 h-3.5 text-[#667085]" />
+                  <input
+                    type="text"
+                    required
+                    value={fullName}
+                    onChange={(e) => setFullName(e.target.value)}
+                    placeholder="e.g. Samuel K. Mensah"
+                    className="w-full rounded-lg border border-[#E5E7EB] pl-8 pr-3 py-2 text-[#202124] focus:ring-2 focus:ring-[#C62828]"
+                  />
+                </div>
               </div>
 
               <div>
@@ -323,7 +365,7 @@ export const TeacherActivationPage: React.FC<TeacherActivationPageProps> = ({
                 ) : (
                   <>
                     <ShieldCheck className="w-4 h-4" />
-                    <span>Activate Account & Proceed</span>
+                    <span>Activate Account</span>
                   </>
                 )}
               </button>
