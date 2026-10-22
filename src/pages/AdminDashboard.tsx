@@ -3,6 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import { getSupabase } from '../lib/supabase';
 import { AttendanceSession, Teacher, SchoolClass, AuditLogItem, TeacherInvitation } from '../types/database';
 import { calculateAttendanceMetrics, generateCsvContent, AttendanceRecordExport } from '../utils/reports';
+import { friendlyGeolocationError } from '../utils/geofence';
 import { InviteTeacherModal } from '../components/InviteTeacherModal';
 import { EvidenceReviewModal } from '../components/EvidenceReviewModal';
 import { AdminCorrectionModal } from '../components/AdminCorrectionModal';
@@ -372,7 +373,7 @@ export const AdminDashboard: React.FC = () => {
             school_longitude: Number(pos.coords.longitude.toFixed(6)),
           }));
         },
-        (err) => alert(`Could not acquire location: ${err.message}`),
+        (err) => alert(`Could not set school location: ${friendlyGeolocationError(err.code, err.message)}`),
         { enableHighAccuracy: true }
       );
     }

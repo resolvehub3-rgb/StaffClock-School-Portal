@@ -1,6 +1,14 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { MapPin, Navigation, AlertCircle, CheckCircle2, RefreshCw, X } from 'lucide-react';
-import { validateGeofence, GeofenceValidationResult, Coordinates } from '../utils/geofence';
+import { MapPin, Navigation, AlertCircle, AlertTriangle, CheckCircle2, RefreshCw, X, Info } from 'lucide-react';
+import {
+  validateGeofence,
+  GeofenceValidationResult,
+  Coordinates,
+  getGeolocationPermissionState,
+  getLocationHelpGuide,
+  friendlyGeolocationError,
+  LocationPermissionState,
+} from '../utils/geofence';
 
 interface LocationVerificationModalProps {
   isOpen: boolean;
@@ -11,6 +19,10 @@ interface LocationVerificationModalProps {
   maxAccuracyThreshold?: number;
   actionTitle?: string;
 }
+
+type LocateStage = 'precise' | 'network';
+
+const DENIED_MSG = 'Location access is blocked for this site.';
 
 export const LocationVerificationModal: React.FC<LocationVerificationModalProps> = ({
   isOpen,
@@ -25,11 +37,33 @@ export const LocationVerificationModal: React.FC<LocationVerificationModalProps>
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [result, setResult] = useState<GeofenceValidationResult | null>(null);
   const [currentCoords, setCurrentCoords] = useState<{ latitude: number; longitude: number; accuracy: number } | null>(null);
+  const [permissionState, setPermissionState] = useState<LocationPermissionState>('unknown');
+  const [locateStage, setLocateStage] = useState<LocateStage>('precise');
 
-  const requestLocation = useCallback(() => {
+  const helpGuide = getLocationHelpGuide(typeof navigator !== 'undefined' ? navigator.userAgent : '');
+
+  /** Single geolocation request wrapped in a promise */
+  const locateOnce = (options: PositionOptions): Promise<Coordinates & { accuracy: number }> =>
+    new Promise((resolve, reject) => {
+      navigator.geolocation.getCurrentPosition(
+        (position) =>
+          resolve({
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
+            accuracy: position.coords.accuracy,
+          }),
+        reject,
+        options
+      );
+    });
+
+  const requestLocation = useCallback(async () => {
     setIsLocating(true);
     setErrorMsg(null);
     setResult(null);
+    setCurrentCoords(null);
+    setPermissionState('unknown');
+    setLocateStage('precise');
 
     if (!navigator.geolocation) {
       setErrorMsg('Geolocation is not supported by your browser.');
@@ -37,41 +71,68 @@ export const LocationVerificationModal: React.FC<LocationVerificationModalProps>
       return;
     }
 
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        const { latitude, longitude, accuracy } = position.coords;
-        setCurrentCoords({ latitude, longitude, accuracy });
+    // Geolocation only works on secure origins (https:// or localhost).
+    // Opening the portal via http://LAN-IP would silently fail on phones.
+    if (typeof window !== 'undefined' && window.isSecureContext === false) {
+      setErrorMsg(
+        'Location requires a secure connection (https:// or localhost). Open this portal through its https link — e.g. the deployed site, not a local network address.'
+      );
+      setIsLocating(false);
+      return;
+    }
 
-        const validation = validateGeofence(
-          { latitude, longitude },
-          schoolCoords,
-          geofenceRadiusMeters,
-          accuracy,
-          maxAccuracyThreshold
-        );
+    // If the browser already remembers a denial, don't fire a request that
+    // will instantly fail - show the un-blocking guide right away.
+    const permission = await getGeolocationPermissionState();
+    if (permission === 'denied') {
+      setPermissionState('denied');
+      setErrorMsg(DENIED_MSG);
+      setIsLocating(false);
+      return;
+    }
 
-        setResult(validation);
+    let fix: (Coordinates & { accuracy: number }) | null = null;
+
+    try {
+      fix = await locateOnce({ enableHighAccuracy: true, timeout: 15000, maximumAge: 0 });
+    } catch (err) {
+      const firstError = err as GeolocationPositionError;
+      if (firstError?.code === 1) {
+        setPermissionState('denied');
+        setErrorMsg(DENIED_MSG);
         setIsLocating(false);
-      },
-      (error) => {
-        console.error('Geolocation error:', error);
-        setIsLocating(false);
-        if (error.code === error.PERMISSION_DENIED) {
-          setErrorMsg('Location access was denied. Please allow location access in your device settings.');
-        } else if (error.code === error.POSITION_UNAVAILABLE) {
-          setErrorMsg('Location information is unavailable. Ensure GPS is enabled.');
-        } else if (error.code === error.TIMEOUT) {
-          setErrorMsg('Location request timed out. Please try again.');
-        } else {
-          setErrorMsg(`Unable to determine location: ${error.message}`);
-        }
-      },
-      {
-        enableHighAccuracy: true,
-        timeout: 15000,
-        maximumAge: 0, // Fresh reading required
+        return;
       }
+
+      // Precise GPS failed (very common indoors) - fall back to Wi-Fi /
+      // network-based location, which succeeds where the GPS chip cannot.
+      setLocateStage('network');
+      try {
+        fix = await locateOnce({ enableHighAccuracy: false, timeout: 15000, maximumAge: 30000 });
+      } catch (secondError) {
+        const ge = secondError as GeolocationPositionError;
+        setErrorMsg(friendlyGeolocationError(ge?.code ?? 0, ge?.message));
+        setIsLocating(false);
+        return;
+      }
+    }
+
+    if (!fix) {
+      setErrorMsg(friendlyGeolocationError(0));
+      setIsLocating(false);
+      return;
+    }
+
+    setCurrentCoords(fix);
+    const validation = validateGeofence(
+      { latitude: fix.latitude, longitude: fix.longitude },
+      schoolCoords,
+      geofenceRadiusMeters,
+      fix.accuracy,
+      maxAccuracyThreshold
     );
+    setResult(validation);
+    setIsLocating(false);
   }, [schoolCoords, geofenceRadiusMeters, maxAccuracyThreshold]);
 
   useEffect(() => {
@@ -81,7 +142,7 @@ export const LocationVerificationModal: React.FC<LocationVerificationModalProps>
   }, [isOpen, requestLocation]);
 
   const handleProceed = () => {
-    if (result && result.isInside && currentCoords) {
+    if (result && result.isInside && result.acceptableAccuracy && currentCoords) {
       onLocationVerified({
         latitude: currentCoords.latitude,
         longitude: currentCoords.longitude,
@@ -118,13 +179,38 @@ export const LocationVerificationModal: React.FC<LocationVerificationModalProps>
           {isLocating ? (
             <div className="py-6 flex flex-col items-center justify-center gap-3">
               <Navigation className="w-8 h-8 text-[#C62828] animate-spin" />
-              <p className="text-xs font-semibold text-[#202124]">Acquiring fresh high-accuracy GPS position...</p>
-              <p className="text-[11px] text-[#667085]">Please ensure GPS is enabled on your device.</p>
+              {locateStage === 'precise' ? (
+                <>
+                  <p className="text-xs font-semibold text-[#202124]">Acquiring fresh high-accuracy GPS position...</p>
+                  <p className="text-[11px] text-[#667085]">Please ensure GPS / Location is enabled on your device.</p>
+                </>
+              ) : (
+                <>
+                  <p className="text-xs font-semibold text-[#202124]">Precise GPS unavailable — trying Wi-Fi / network location...</p>
+                  <p className="text-[11px] text-[#667085]">Indoor GPS often fails; network location may still work.</p>
+                </>
+              )}
             </div>
           ) : errorMsg ? (
             <div className="py-3 flex flex-col items-center gap-2 text-center">
               <AlertCircle className="w-8 h-8 text-[#B91C1C]" />
               <p className="text-xs font-semibold text-[#B91C1C]">{errorMsg}</p>
+
+              {permissionState === 'denied' && (
+                <div className="mt-1 w-full rounded-xl bg-amber-50 border border-amber-200 p-3 text-left">
+                  <p className="mb-1.5 flex items-center gap-1 text-[11px] font-bold text-amber-900">
+                    <Info className="w-3.5 h-3.5" />
+                    How to allow location on {helpGuide.label}:
+                  </p>
+                  <ol className="list-decimal ml-4 space-y-1 text-[11px] leading-relaxed text-amber-800">
+                    {helpGuide.steps.map((step, index) => (
+                      <li key={index}>{step}</li>
+                    ))}
+                  </ol>
+                  <p className="mt-2 text-[10px] leading-relaxed text-amber-700">{helpGuide.systemNote}</p>
+                </div>
+              )}
+
               <button
                 onClick={requestLocation}
                 className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-[#C62828] px-3.5 py-1.5 text-xs font-bold text-white hover:bg-[#8E1B1B]"
@@ -135,7 +221,17 @@ export const LocationVerificationModal: React.FC<LocationVerificationModalProps>
             </div>
           ) : result ? (
             <div className="space-y-3">
-              {result.isInside ? (
+              {!result.acceptableAccuracy ? (
+                <div className="rounded-xl bg-amber-50 border border-amber-200 p-4 text-center">
+                  <AlertTriangle className="mx-auto w-8 h-8 text-amber-600 mb-1" />
+                  <p className="text-xs font-bold text-amber-900">GPS Signal Too Weak</p>
+                  <p className="text-[11px] text-amber-800 mt-1">{result.message}</p>
+                  <p className="text-[10px] text-amber-700 mt-1.5">
+                    Accuracy is ±{Math.round(result.accuracyMeters)}m (limit ±{maxAccuracyThreshold}m). Step outdoors or
+                    near a window, wait a few seconds, then refresh.
+                  </p>
+                </div>
+              ) : result.isInside ? (
                 <div className="rounded-xl bg-emerald-50 border border-emerald-200 p-4 text-center">
                   <CheckCircle2 className="mx-auto w-8 h-8 text-emerald-600 mb-1" />
                   <p className="text-xs font-bold text-emerald-900">Verified On School Premises</p>
@@ -169,7 +265,7 @@ export const LocationVerificationModal: React.FC<LocationVerificationModalProps>
                   <span>Refresh GPS</span>
                 </button>
 
-                {result.isInside && (
+                {result.isInside && result.acceptableAccuracy && (
                   <button
                     onClick={handleProceed}
                     className="flex items-center gap-1.5 rounded-lg bg-[#C62828] px-4 py-1.5 text-xs font-bold text-white hover:bg-[#8E1B1B] shadow-xs"

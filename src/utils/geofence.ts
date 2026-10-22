@@ -114,3 +114,109 @@ export function validateGeofence(
       : `Outside school geofence (${Math.round(distanceMeters)}m away, limit is ${radiusMeters}m)`,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Geolocation permission diagnostics & user-facing guidance
+// ---------------------------------------------------------------------------
+
+export type LocationPermissionState = 'granted' | 'denied' | 'prompt' | 'unknown';
+
+/**
+ * Reads the current geolocation permission state for this origin (best effort).
+ * Returns 'unknown' when the Permissions API is unavailable (older Safari).
+ */
+export async function getGeolocationPermissionState(): Promise<LocationPermissionState> {
+  if (typeof navigator === 'undefined' || !navigator.permissions?.query) {
+    return 'unknown';
+  }
+  try {
+    const status = await navigator.permissions.query({ name: 'geolocation' });
+    return status.state;
+  } catch {
+    return 'unknown';
+  }
+}
+
+export type DevicePlatform = 'ios' | 'android' | 'desktop';
+
+/** Detects the user's device platform from a user-agent string. */
+export function detectDevicePlatform(userAgent: string): DevicePlatform {
+  const ua = userAgent || '';
+  if (/iPhone|iPad|iPod/i.test(ua)) return 'ios';
+  // iPadOS masquerades as a Macintosh but keeps the Mobile token
+  if (/Macintosh/i.test(ua) && /Mobile\//.test(ua)) return 'ios';
+  if (/Android/i.test(ua)) return 'android';
+  return 'desktop';
+}
+
+export interface LocationHelpGuide {
+  platform: DevicePlatform;
+  /** Human-readable device label, e.g. "iPhone / iPad" */
+  label: string;
+  /** Ordered, clickable steps to re-enable location for this site */
+  steps: string[];
+  /** Extra note covering OS-level location switches */
+  systemNote: string;
+}
+
+/**
+ * Platform-specific instructions for un-blocking location access.
+ * The browser prompt only appears once; after a denial users must re-allow
+ * the site through browser chrome, which is what these steps explain.
+ */
+export function getLocationHelpGuide(userAgent: string): LocationHelpGuide {
+  const platform = detectDevicePlatform(userAgent);
+
+  switch (platform) {
+    case 'ios':
+      return {
+        platform,
+        label: 'iPhone / iPad',
+        steps: [
+          'Tap the "aA" or lock icon at the top of the address bar.',
+          'Tap "Website Settings", then set Location to "Allow".',
+          'Reload this page and tap "Retry GPS".',
+        ],
+        systemNote:
+          'If it still fails, open Settings > Privacy & Security > Location Services > your browser (or the StaffClock app) and choose "While Using the App".',
+      };
+    case 'android':
+      return {
+        platform,
+        label: 'Android',
+        steps: [
+          'Tap the lock or tune icon in the address bar.',
+          'Tap "Permissions" > "Location" > "Allow".',
+          'Reload this page and tap "Retry GPS".',
+        ],
+        systemNote:
+          'Also switch on Settings > Location (GPS). For better indoor accuracy, enable Google Location Accuracy / Wi-Fi scanning.',
+      };
+    default:
+      return {
+        platform,
+        label: 'Computer',
+        steps: [
+          'Click the lock or tune icon to the left of the site address.',
+          'Open "Site settings" > "Location" and choose "Allow".',
+          'Reload this page and tap "Retry GPS".',
+        ],
+        systemNote:
+          'Also make sure location is enabled in your OS settings (Windows: Settings > Privacy > Location; Mac: System Settings > Privacy & Security > Location Services).',
+      };
+  }
+}
+
+/** Maps a GeolocationPositionError code to an actionable, friendly message. */
+export function friendlyGeolocationError(code: number, message?: string): string {
+  switch (code) {
+    case 1:
+      return 'Location access is blocked for this site. Follow the steps above, then tap Retry GPS.';
+    case 2:
+      return 'Location is unavailable right now. Turn on Location (GPS) and Wi-Fi, move near a window, then retry.';
+    case 3:
+      return 'The GPS request timed out. Tap Retry GPS — moving outdoors helps.';
+    default:
+      return `Unable to determine location${message ? `: ${message}` : '.'}`;
+  }
+}

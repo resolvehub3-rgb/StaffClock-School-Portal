@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { getSupabase } from '../lib/supabase';
 import { SCHOOL_SETUP_FLAG_KEY } from '../context/AuthContext';
+import { friendlyGeolocationError } from '../utils/geofence';
 import { School, MapPin, Clock, ShieldCheck, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
 
 interface FirstRunSetupPageProps {
@@ -38,7 +39,7 @@ export const FirstRunSetupPage: React.FC<FirstRunSetupPageProps> = ({
           setLatitude(Number(pos.coords.latitude.toFixed(6)));
           setLongitude(Number(pos.coords.longitude.toFixed(6)));
         },
-        (err) => alert(`GPS unavailable: ${err.message}`),
+        (err) => alert(`Could not capture location: ${friendlyGeolocationError(err.code, err.message)}`),
         { enableHighAccuracy: true }
       );
     }
