@@ -1,0 +1,9 @@
+{
+  "name": "StaffClock - School Teacher Check-In & Check-Out",
+  "description": "Production-ready school teacher attendance management system with verified camera selfie check-in, geofence validation, official countdown, and real-time administrative monitoring.",
+  "requestFramePermissions": [
+    "camera",
+    "geolocation"
+  ],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
