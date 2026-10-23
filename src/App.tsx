@@ -32,7 +32,7 @@ function AppContent() {
       setCurrentView('activate');
     } else if (params.get('setup') === '1') {
       setCurrentView('setup');
-    } else if (viewParam === 'admin' || viewParam === 'teacher' || viewParam === 'headmaster') {
+    } else if (viewParam === 'admin' || viewParam === 'teacher' || viewParam === 'headmaster' || viewParam === 'assistant_headmaster') {
       setCurrentView('main');
     }
   }, []);
@@ -118,7 +118,7 @@ function AppContent() {
 
       {isOwnerOrAdmin ? (
         <AdminDashboard />
-      ) : currentRole === 'headmaster' ? (
+      ) : currentRole === 'headmaster' || currentRole === 'assistant_headmaster' ? (
         <HeadmasterDashboard />
       ) : (
         <TeacherDashboard />

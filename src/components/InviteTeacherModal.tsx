@@ -21,7 +21,7 @@ export const InviteTeacherModal: React.FC<InviteTeacherModalProps> = ({
   const [fullName, setFullName] = useState('');
   const [staffNumber, setStaffNumber] = useState('');
   const [classId, setClassId] = useState('');
-  const [role, setRole] = useState<'teacher' | 'headmaster'>('teacher');
+  const [role, setRole] = useState<'teacher' | 'headmaster' | 'assistant_headmaster'>('teacher');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -372,34 +372,37 @@ export const InviteTeacherModal: React.FC<InviteTeacherModalProps> = ({
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className={`grid gap-3 ${role === 'teacher' ? 'grid-cols-2' : 'grid-cols-1'}`}>
                 <div>
                   <label className="block font-semibold text-[#202124] mb-1">System Role</label>
                   <select
                     value={role}
-                    onChange={(e) => setRole(e.target.value as any)}
+                    onChange={(e) => setRole(e.target.value as 'teacher' | 'headmaster' | 'assistant_headmaster')}
                     className="w-full rounded-lg border border-[#E5E7EB] px-3 py-2 text-[#202124] focus:outline-none focus:ring-2 focus:ring-[#C62828]"
                   >
                     <option value="teacher">Teacher</option>
                     <option value="headmaster">Headmaster</option>
+                    <option value="assistant_headmaster">Assistant Headmaster</option>
                   </select>
                 </div>
 
-                <div>
-                  <label className="block font-semibold text-[#202124] mb-1">Primary Class</label>
-                  <select
-                    value={classId}
-                    onChange={(e) => setClassId(e.target.value)}
-                    className="w-full rounded-lg border border-[#E5E7EB] px-3 py-2 text-[#202124] focus:outline-none focus:ring-2 focus:ring-[#C62828]"
-                  >
-                    <option value="">-- Unassigned / Subject --</option>
-                    {classes.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.class_name} ({c.class_level})
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                {role === 'teacher' && (
+                  <div>
+                    <label className="block font-semibold text-[#202124] mb-1">Primary Class</label>
+                    <select
+                      value={classId}
+                      onChange={(e) => setClassId(e.target.value)}
+                      className="w-full rounded-lg border border-[#E5E7EB] px-3 py-2 text-[#202124] focus:outline-none focus:ring-2 focus:ring-[#C62828]"
+                    >
+                      <option value="">-- Unassigned / Subject --</option>
+                      {classes.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.class_name} ({c.class_level})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
               </div>
 
               {errorMsg && (

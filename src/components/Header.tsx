@@ -30,6 +30,8 @@ export const Header: React.FC<HeaderProps> = ({ onOpenSupabaseConfig }) => {
       ? 'School Owner / Admin'
       : role === 'headmaster'
       ? 'Headmaster'
+      : role === 'assistant_headmaster'
+      ? 'Assistant Headmaster'
       : role === 'teacher'
       ? 'Teacher'
       : 'Staff';
@@ -97,6 +99,16 @@ export const Header: React.FC<HeaderProps> = ({ onOpenSupabaseConfig }) => {
                     }`}
                   >
                     Headmaster View
+                  </button>
+                  <button
+                    onClick={() => setActiveRoleView('assistant_headmaster')}
+                    className={`px-2 py-0.5 rounded-md transition ${
+                      activeRoleView === 'assistant_headmaster'
+                        ? 'bg-[#C62828] text-white shadow-xs'
+                        : 'text-[#667085] hover:text-[#202124]'
+                    }`}
+                  >
+                    Asst. Headmaster View
                   </button>
                 </div>
               )}

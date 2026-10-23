@@ -1,4 +1,4 @@
-export type UserRole = 'owner' | 'headmaster' | 'teacher';
+export type UserRole = 'owner' | 'headmaster' | 'assistant_headmaster' | 'teacher';
 
 export interface SchoolSettings {
   id: string;
@@ -104,7 +104,7 @@ export interface TeacherInvitation {
   email: string;
   full_name: string;
   staff_number: string;
-  role: 'teacher' | 'headmaster';
+  role: 'teacher' | 'headmaster' | 'assistant_headmaster';
   class_id: string | null;
   token: string;
   expires_at: string;

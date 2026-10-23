@@ -21,7 +21,7 @@ import {
 } from 'lucide-react';
 
 export const HeadmasterDashboard: React.FC = () => {
-  const { schoolSettings } = useAuth();
+  const { schoolSettings, profile } = useAuth();
   const supabase = getSupabase();
 
   const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().split('T')[0]);
@@ -29,6 +29,9 @@ export const HeadmasterDashboard: React.FC = () => {
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [classes, setClasses] = useState<SchoolClass[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+  const [isLive, setIsLive] = useState<boolean>(false);
+  const [lastUpdated, setLastUpdated] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   // Filters
@@ -39,9 +42,16 @@ export const HeadmasterDashboard: React.FC = () => {
   // Evidence review modal
   const [reviewSession, setReviewSession] = useState<AttendanceSession | null>(null);
 
-  const loadHeadmasterData = useCallback(async () => {
+  // opts.silent = background refresh (realtime event / manual refresh button):
+  // data reloads in place with only the refresh button spinning - no page flash
+  const loadHeadmasterData = useCallback(async (opts?: { silent?: boolean }) => {
     if (!supabase) return;
-    setIsLoading(true);
+    const silent = opts?.silent === true;
+    if (silent) {
+      setIsRefreshing(true);
+    } else {
+      setIsLoading(true);
+    }
     setErrorMsg(null);
 
     try {
@@ -86,30 +96,57 @@ export const HeadmasterDashboard: React.FC = () => {
       console.error('Headmaster load error:', err);
       setErrorMsg(err.message || 'Failed to load attendance records');
     } finally {
-      setIsLoading(false);
+      if (silent) {
+        setIsRefreshing(false);
+      } else {
+        setIsLoading(false);
+      }
+      setLastUpdated(
+        new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })
+      );
     }
   }, [supabase, selectedDate]);
 
   useEffect(() => {
     loadHeadmasterData();
 
+    // Realtime: teacher check-ins/check-outs reload the monitor in place
     if (supabase) {
+      const refresh = () => {
+        void loadHeadmasterData({ silent: true });
+      };
       const channel = supabase
         .channel('headmaster-live-updates')
         .on(
           'postgres_changes',
           { event: '*', schema: 'public', table: 'attendance_sessions' },
-          () => {
-            loadHeadmasterData();
-          }
+          refresh
         )
-        .subscribe();
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'teachers' },
+          refresh
+        )
+        .subscribe((status) => {
+          setIsLive(String(status) === 'SUBSCRIBED');
+        });
 
       return () => {
+        setIsLive(false);
         supabase.removeChannel(channel);
       };
     }
   }, [loadHeadmasterData, supabase]);
+
+  // Fallback: while the realtime channel is not connected, quietly re-sync
+  // every 20s so the monitor still updates without a manual page refresh
+  useEffect(() => {
+    if (isLive) return;
+    const timer = setInterval(() => {
+      void loadHeadmasterData({ silent: true });
+    }, 20000);
+    return () => clearInterval(timer);
+  }, [isLive, loadHeadmasterData]);
 
   const activeTeachersCount = teachers.filter((t) => t.employment_status === 'active').length;
   const metrics = calculateAttendanceMetrics(
@@ -172,7 +209,9 @@ export const HeadmasterDashboard: React.FC = () => {
           <div>
             <div className="flex items-center gap-2">
               <ShieldCheck className="w-5 h-5 text-[#C62828]" />
-              <h2 className="text-lg font-bold text-[#202124]">Headmaster Attendance Monitor</h2>
+              <h2 className="text-lg font-bold text-[#202124]">
+                {profile?.role === 'assistant_headmaster' ? 'Assistant Headmaster' : 'Headmaster'} Attendance Monitor
+              </h2>
             </div>
             <p className="text-xs text-[#667085]">
               Realtime school punctuality, photo evidence verification, and daily staff monitoring.
@@ -193,6 +232,40 @@ export const HeadmasterDashboard: React.FC = () => {
               <span>Export CSV</span>
             </button>
           </div>
+        </div>
+
+        {/* Live auto-update status + manual refresh */}
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[#E5E7EB] bg-white px-3 py-2 shadow-xs">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] font-semibold">
+            <span className="flex items-center gap-1.5">
+              <span className="relative flex h-2 w-2">
+                {isLive && (
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                )}
+                <span
+                  className={`relative inline-flex h-2 w-2 rounded-full ${
+                    isLive ? 'bg-emerald-500' : 'bg-amber-500'
+                  }`}
+                />
+              </span>
+              <span className={isLive ? 'text-emerald-700' : 'text-amber-700'}>
+                {isLive ? 'Live — updating automatically' : 'Offline — syncing every 20s'}
+              </span>
+            </span>
+            <span className="font-normal text-[#667085]">
+              {lastUpdated ? `Updated ${lastUpdated}` : isLoading ? 'Loading…' : ''}
+            </span>
+          </div>
+          <button
+            onClick={() => loadHeadmasterData({ silent: true })}
+            disabled={isRefreshing}
+            className="flex items-center gap-1.5 rounded-lg border border-[#E5E7EB] bg-gray-50 px-2.5 py-1.5 text-xs font-semibold text-[#667085] shadow-xs hover:bg-gray-100 hover:text-[#202124] disabled:opacity-60"
+            title={isRefreshing ? 'Refreshing data…' : 'Refresh data'}
+            aria-label="Refresh dashboard data"
+          >
+            <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+            <span className="hidden sm:inline">{isRefreshing ? 'Refreshing…' : 'Refresh'}</span>
+          </button>
         </div>
 
         {/* Overview KPIs */}
