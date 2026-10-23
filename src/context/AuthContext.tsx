@@ -35,6 +35,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [profile, setProfile] = useState<Profile | null>(null);
   const [teacherRecord, setTeacherRecord] = useState<Teacher | null>(null);
   const [schoolSettings, setSchoolSettings] = useState<SchoolSettings | null>(null);
+  const [settingsLive, setSettingsLive] = useState<boolean>(false);
   const [isSchoolConfigured, setIsSchoolConfigured] = useState<boolean | null>(null);
   const [activeRoleView, setActiveRoleView] = useState<UserRole | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -206,26 +207,47 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     );
 
-    // Realtime subscriptions for school_settings
+    // Realtime: when the admin saves School Operating Settings, every open
+    // portal (admin / teacher / headmaster) applies the new row instantly -
+    // no page refresh needed on the staff portal
     const settingsChannel = supabase
       .channel('public:school_settings')
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'school_settings' },
         (payload) => {
-          if (payload.new) {
-            setSchoolSettings(payload.new as SchoolSettings);
+          const row = payload.new as SchoolSettings | undefined;
+          // Ignore DELETE events (payload.new is an empty object there)
+          if (row && Object.keys(row).length > 0) {
+            console.info('[StaffClock] Live school settings update received');
+            setSchoolSettings(row);
           }
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        console.info('[StaffClock] Settings live channel:', String(status));
+        setSettingsLive(String(status) === 'SUBSCRIBED');
+      });
 
     return () => {
       isMounted = false;
+      setSettingsLive(false);
       authListener?.subscription?.unsubscribe();
       supabase.removeChannel(settingsChannel);
     };
   }, [supabase, fetchSchoolSettings, fetchSchoolSetupStatus, fetchProfileAndTeacher]);
+
+  // Fallback: while the realtime channel is not connected, quietly re-sync
+  // school settings every 20s so the staff portal still updates without a
+  // manual page refresh
+  useEffect(() => {
+    if (settingsLive) return;
+    const timer = setInterval(() => {
+      console.info('[StaffClock] Settings fallback sync (realtime not connected)');
+      void fetchSchoolSettings();
+    }, 20000);
+    return () => clearInterval(timer);
+  }, [settingsLive, fetchSchoolSettings]);
 
   const signIn = async (email: string, password: string) => {
     if (!supabase) return { error: new Error('Supabase client not initialized') };
