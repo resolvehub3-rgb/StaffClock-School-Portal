@@ -1,5 +1,6 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
+import { Search, Loader2 } from 'lucide-react';
 import 'leaflet/dist/leaflet.css';
 
 interface GeofenceMapPickerProps {
@@ -61,6 +62,55 @@ export const GeofenceMapPicker: React.FC<GeofenceMapPickerProps> = ({
       map.fitBounds(circle.getBounds(), { padding: [24, 24], maxZoom: 18, animate: false });
     } catch {
       /* bounds not ready yet */
+    }
+  };
+
+  const [searchQuery, setSearchQuery] = useState('');
+  const [isSearching, setIsSearching] = useState(false);
+  const [searchStatus, setSearchStatus] = useState<{ kind: 'ok' | 'error'; message: string } | null>(null);
+
+  /**
+   * Geocodes a typed address/place into coordinates using Nominatim
+   * (OpenStreetMap) - free, no API key, no billing. Policy:1 request per
+   * user action, which this manual search satisfies.
+   */
+  const handleSearch = async () => {
+    const query = searchQuery.trim();
+    if (!query || isSearching) return;
+    setIsSearching(true);
+    setSearchStatus(null);
+    try {
+      const response = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&accept-language=en&q=${encodeURIComponent(query)}`,
+        { headers: { Accept: 'application/json' } }
+      );
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const rows = (await response.json()) as Array<{ lat: string; lon: string; display_name: string }>;
+
+      if (!Array.isArray(rows) || rows.length === 0) {
+        setSearchStatus({
+          kind: 'error',
+          message: 'No match found. Try a fuller address, e.g. "Dansoman, Accra" or the school name.',
+        });
+        return;
+      }
+
+      const hit = rows[0];
+      const lat = Number(Number(hit.lat).toFixed(6));
+      const lng = Number(Number(hit.lon).toFixed(6));
+      onChangeRef.current(lat, lng);
+      setSearchStatus({ kind: 'ok', message: `Matched: ${hit.display_name}` });
+
+      // Re-frame the view around the matched location once the pin has moved
+      setTimeout(() => {
+        const map = mapRef.current;
+        const circle = circleRef.current;
+        if (map && circle) fitToCircle(map, circle);
+      }, 650);
+    } catch {
+      setSearchStatus({ kind: 'error', message: 'Search failed — check your internet connection and try again.' });
+    } finally {
+      setIsSearching(false);
     }
   };
 
@@ -164,6 +214,55 @@ export const GeofenceMapPicker: React.FC<GeofenceMapPickerProps> = ({
 
   return (
     <div className="space-y-2">
+      <div className="flex items-center gap-2">
+        <div className="relative flex-1">
+          <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#667085]" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                handleSearch();
+              }
+            }}
+            placeholder='Type an address or place — e.g. "Dansoman, Accra"'
+            aria-label="Search location by address or place name"
+            className="w-full rounded-lg border border-[#E5E7EB] py-2 pl-8 pr-3 text-xs text-[#202124] focus:ring-2 focus:ring-[#C62828]"
+          />
+        </div>
+        <button
+          type="button"
+          onClick={handleSearch}
+          disabled={isSearching || searchQuery.trim().length === 0}
+          className="flex items-center gap-1.5 whitespace-nowrap rounded-lg bg-[#C62828] px-4 py-2 text-xs font-bold text-white transition hover:bg-[#8E1B1B] disabled:opacity-50"
+        >
+          {isSearching ? (
+            <>
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              <span>Finding...</span>
+            </>
+          ) : (
+            <>
+              <Search className="h-3.5 w-3.5" />
+              <span>Find</span>
+            </>
+          )}
+        </button>
+      </div>
+
+      {searchStatus && (
+        <p
+          role="status"
+          className={`break-words text-[11px] leading-snug line-clamp-2 ${
+            searchStatus.kind === 'ok' ? 'font-medium text-emerald-700' : 'font-semibold text-[#B91C1C]'
+          }`}
+        >
+          {searchStatus.message}
+        </p>
+      )}
+
       <div
         ref={containerRef}
         className="overflow-hidden rounded-xl border border-[#E5E7EB] bg-gray-100"
@@ -191,7 +290,8 @@ export const GeofenceMapPicker: React.FC<GeofenceMapPickerProps> = ({
 
       <p className="text-[11px] leading-relaxed text-[#667085]">
         Drag the <span className="font-bold text-[#C62828]">red pin</span> or tap anywhere on the map to set the
-        school center — the red circle shows where attendance is accepted.
+        school center — the red circle shows where attendance is accepted. Address search &amp; map ©
+        OpenStreetMap (Nominatim).
       </p>
     </div>
   );
