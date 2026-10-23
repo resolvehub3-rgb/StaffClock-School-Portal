@@ -74,6 +74,9 @@ export const AdminDashboard: React.FC = () => {
   const [pendingInvites, setPendingInvites] = useState<TeacherInvitation[]>([]);
   const [copiedToken, setCopiedToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+  const [isLive, setIsLive] = useState<boolean>(false);
+  const [lastUpdated, setLastUpdated] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   // Filters & Search
@@ -125,9 +128,16 @@ export const AdminDashboard: React.FC = () => {
   }, [schoolSettings]);
 
   // Load Real Data from Supabase
-  const loadData = useCallback(async () => {
+  // opts.silent = background refresh (realtime event / manual refresh button):
+  // data reloads in place with only the refresh button spinning - no page flash
+  const loadData = useCallback(async (opts?: { silent?: boolean }) => {
     if (!supabase) return;
-    setIsLoading(true);
+    const silent = opts?.silent === true;
+    if (silent) {
+      setIsRefreshing(true);
+    } else {
+      setIsLoading(true);
+    }
     setErrorMsg(null);
 
     try {
@@ -217,47 +227,64 @@ export const AdminDashboard: React.FC = () => {
       console.error('Error loading admin data:', err);
       setErrorMsg(err.message || 'Failed to load records from Supabase');
     } finally {
-      setIsLoading(false);
+      if (silent) {
+        setIsRefreshing(false);
+      } else {
+        setIsLoading(false);
+      }
+      setLastUpdated(
+        new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })
+      );
     }
   }, [supabase, selectedDate]);
 
   useEffect(() => {
     loadData();
 
-    // Supabase Realtime Subscription for Live Updates:
-    // attendance changes, teachers activating their invites, and
-    // invitations being created all refresh the dashboard immediately
+    // Supabase Realtime: staff check-in/check-out, teacher activation and
+    // invitation changes reload the dashboard in place (silent - the page
+    // never needs a manual refresh)
     if (supabase) {
+      const refresh = () => {
+        void loadData({ silent: true });
+      };
       const channel = supabase
         .channel('admin-live-updates')
         .on(
           'postgres_changes',
           { event: '*', schema: 'public', table: 'attendance_sessions' },
-          () => {
-            loadData();
-          }
+          refresh
         )
         .on(
           'postgres_changes',
           { event: '*', schema: 'public', table: 'teachers' },
-          () => {
-            loadData();
-          }
+          refresh
         )
         .on(
           'postgres_changes',
           { event: '*', schema: 'public', table: 'teacher_invitations' },
-          () => {
-            loadData();
-          }
+          refresh
         )
-        .subscribe();
+        .subscribe((status) => {
+          setIsLive(String(status) === 'SUBSCRIBED');
+        });
 
       return () => {
+        setIsLive(false);
         supabase.removeChannel(channel);
       };
     }
   }, [loadData, supabase]);
+
+  // Safety net: while the realtime channel is not connected, quietly poll so
+  // the dashboard still updates without a manual page refresh
+  useEffect(() => {
+    if (isLive) return;
+    const timer = setInterval(() => {
+      void loadData({ silent: true });
+    }, 20000);
+    return () => clearInterval(timer);
+  }, [isLive, loadData]);
 
   // Compute Live Metrics from actual records
   const activeTeachersCount = teachers.filter((t) => t.employment_status === 'active').length;
@@ -294,7 +321,7 @@ export const AdminDashboard: React.FC = () => {
         .from('teachers')
         .update({ employment_status: newStatus })
         .eq('id', teacher.id);
-      await loadData();
+      await loadData({ silent: true });
     } catch (err: any) {
       console.error('Toggle status error:', err);
     }
@@ -342,7 +369,7 @@ export const AdminDashboard: React.FC = () => {
       setNewClassName('');
       setNewClassLevel('');
       setIsAddClassOpen(false);
-      await loadData();
+      await loadData({ silent: true });
     } catch (err: any) {
       console.error('Create class error:', err);
       alert(err.message);
@@ -482,6 +509,40 @@ export const AdminDashboard: React.FC = () => {
           </div>
         )}
 
+        {/* Live auto-update status + manual refresh (visible on every section) */}
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[#E5E7EB] bg-white px-3 py-2 shadow-xs">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] font-semibold">
+            <span className="flex items-center gap-1.5">
+              <span className="relative flex h-2 w-2">
+                {isLive && (
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                )}
+                <span
+                  className={`relative inline-flex h-2 w-2 rounded-full ${
+                    isLive ? 'bg-emerald-500' : 'bg-amber-500'
+                  }`}
+                />
+              </span>
+              <span className={isLive ? 'text-emerald-700' : 'text-amber-700'}>
+                {isLive ? 'Live — updating automatically' : 'Offline — syncing every 20s'}
+              </span>
+            </span>
+            <span className="font-normal text-[#667085]">
+              {lastUpdated ? `Updated ${lastUpdated}` : isLoading ? 'Loading…' : ''}
+            </span>
+          </div>
+          <button
+            onClick={() => loadData({ silent: true })}
+            disabled={isRefreshing}
+            className="flex items-center gap-1.5 rounded-lg border border-[#E5E7EB] bg-gray-50 px-2.5 py-1.5 text-xs font-semibold text-[#667085] shadow-xs hover:bg-gray-100 hover:text-[#202124] disabled:opacity-60"
+            title={isRefreshing ? 'Refreshing data…' : 'Refresh data'}
+            aria-label="Refresh dashboard data"
+          >
+            <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+            <span className="hidden sm:inline">{isRefreshing ? 'Refreshing…' : 'Refresh'}</span>
+          </button>
+        </div>
+
         {/* 1. OVERVIEW & METRICS */}
         {activeTab === 'overview' && (
           <div className="space-y-6">
@@ -501,13 +562,6 @@ export const AdminDashboard: React.FC = () => {
                   onChange={(e) => setSelectedDate(e.target.value)}
                   className="rounded-lg border border-[#E5E7EB] bg-white px-3 py-1.5 text-xs font-semibold text-[#202124] shadow-xs focus:ring-2 focus:ring-[#C62828]"
                 />
-                <button
-                  onClick={loadData}
-                  className="p-1.5 rounded-lg border border-[#E5E7EB] bg-white text-[#667085] hover:text-[#202124]"
-                  title="Refresh data"
-                >
-                  <RefreshCw className="w-4 h-4" />
-                </button>
               </div>
             </div>
 
@@ -1399,7 +1453,7 @@ export const AdminDashboard: React.FC = () => {
         isOpen={isInviteModalOpen}
         onClose={() => setIsInviteModalOpen(false)}
         classes={classes}
-        onTeacherInvited={loadData}
+        onTeacherInvited={() => loadData({ silent: true })}
       />
 
       <EvidenceReviewModal
@@ -1421,7 +1475,7 @@ export const AdminDashboard: React.FC = () => {
         isOpen={!!correctionSession}
         onClose={() => setCorrectionSession(null)}
         session={correctionSession}
-        onSuccess={loadData}
+        onSuccess={() => loadData({ silent: true })}
       />
     </div>
   );
