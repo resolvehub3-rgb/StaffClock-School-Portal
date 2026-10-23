@@ -5,6 +5,7 @@ import { AttendanceSession, Teacher, SchoolClass, AuditLogItem, TeacherInvitatio
 import { calculateAttendanceMetrics, generateCsvContent, AttendanceRecordExport } from '../utils/reports';
 import { friendlyGeolocationError } from '../utils/geofence';
 import { InviteTeacherModal } from '../components/InviteTeacherModal';
+import { GeofenceMapPicker } from '../components/GeofenceMapPicker';
 import { EvidenceReviewModal } from '../components/EvidenceReviewModal';
 import { AdminCorrectionModal } from '../components/AdminCorrectionModal';
 import {
@@ -1286,6 +1287,16 @@ export const AdminDashboard: React.FC = () => {
                     />
                   </div>
                 </div>
+
+                <GeofenceMapPicker
+                  latitude={settingsForm.school_latitude}
+                  longitude={settingsForm.school_longitude}
+                  radiusMeters={settingsForm.geofence_radius_meters}
+                  onChange={(latitude, longitude) =>
+                    setSettingsForm((prev) => ({ ...prev, school_latitude: latitude, school_longitude: longitude }))
+                  }
+                  onRadiusChange={(radius) => setSettingsForm((prev) => ({ ...prev, geofence_radius_meters: radius }))}
+                />
               </div>
 
               <div className="flex justify-end pt-2 border-t border-[#E5E7EB]">

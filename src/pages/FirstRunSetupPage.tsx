@@ -3,6 +3,7 @@ import { getSupabase } from '../lib/supabase';
 import { SCHOOL_SETUP_FLAG_KEY } from '../context/AuthContext';
 import { friendlyGeolocationError } from '../utils/geofence';
 import { School, MapPin, Clock, ShieldCheck, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
+import { GeofenceMapPicker } from '../components/GeofenceMapPicker';
 
 interface FirstRunSetupPageProps {
   onSetupComplete: () => void;
@@ -249,6 +250,19 @@ export const FirstRunSetupPage: React.FC<FirstRunSetupPageProps> = ({
                   className="w-full rounded-lg border border-[#E5E7EB] px-3 py-2 text-[#202124]"
                 />
               </div>
+            </div>
+
+            <div className="mt-3">
+              <GeofenceMapPicker
+                latitude={latitude}
+                longitude={longitude}
+                radiusMeters={geofenceRadius}
+                onChange={(lat, lng) => {
+                  setLatitude(lat);
+                  setLongitude(lng);
+                }}
+                onRadiusChange={setGeofenceRadius}
+              />
             </div>
           </div>
 
