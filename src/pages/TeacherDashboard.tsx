@@ -20,6 +20,11 @@ import {
   Loader2,
 } from 'lucide-react';
 
+// TEMPORARY SWITCH: the school geofence (GPS) check is disabled "for now".
+// Check-in/out skip straight to the live camera selfie (camera only - no
+// gallery). Set back to true to re-enable GPS geofence verification.
+const GEOFENCE_CHECK_ENABLED = false;
+
 export const TeacherDashboard: React.FC = () => {
   const { user, profile, teacherRecord, schoolSettings } = useAuth();
   const supabase = getSupabase();
@@ -135,11 +140,15 @@ export const TeacherDashboard: React.FC = () => {
     }
   }, [loadAttendance, supabase, teacherRecord]);
 
-  // Step 1: Start Check-In -> Location verification
+  // Step 1: Start Check-In -> Camera directly while geofence is disabled
   const handleStartCheckIn = () => {
     setErrorMsg(null);
     setSuccessToast(null);
-    setIsLocationModalOpen(true);
+    if (GEOFENCE_CHECK_ENABLED) {
+      setIsLocationModalOpen(true);
+    } else {
+      setIsCameraModalOpen(true);
+    }
   };
 
   // Step 2: Location verified -> Open camera modal
@@ -156,7 +165,7 @@ export const TeacherDashboard: React.FC = () => {
 
   // Step 3: Camera captured -> upload to private storage and call handle_check_in RPC
   const handleSelfieCaptured = async (imageBlob: Blob) => {
-    if (!user || !supabase || !verifiedLocation) return;
+    if (!user || !supabase) return;
     setIsSubmittingCheckIn(true);
     setErrorMsg(null);
 
@@ -167,11 +176,11 @@ export const TeacherDashboard: React.FC = () => {
         throw new Error(`Selfie upload failed: ${uploadErr?.message || 'Storage error'}`);
       }
 
-      // 2. Call server-side check-in RPC
+      // 2. Call server-side check-in RPC (location is NULL while geofence is off)
       const { data, error: rpcErr } = await supabase.rpc('handle_check_in', {
-        p_latitude: verifiedLocation.latitude,
-        p_longitude: verifiedLocation.longitude,
-        p_accuracy: verifiedLocation.accuracy,
+        p_latitude: verifiedLocation?.latitude ?? null,
+        p_longitude: verifiedLocation?.longitude ?? null,
+        p_accuracy: verifiedLocation?.accuracy ?? null,
         p_evidence_path: evidencePath,
       });
 
@@ -201,17 +210,13 @@ export const TeacherDashboard: React.FC = () => {
     setIsCheckoutConfirmOpen(true);
   };
 
-  const handleConfirmCheckoutStep = () => {
-    setIsCheckoutConfirmOpen(false);
-    setIsCheckoutLocationOpen(true);
-  };
-
-  const handleCheckoutLocationVerified = async (coords: {
+  // Runs the checkout RPC with optional GPS coords (null while geofence is off)
+  const runCheckoutRPC = async (coords: {
     latitude: number;
     longitude: number;
     accuracy: number;
     distance: number;
-  }) => {
+  } | null) => {
     if (!supabase) return;
     setIsCheckoutLocationOpen(false);
     setIsSubmittingCheckout(true);
@@ -219,9 +224,9 @@ export const TeacherDashboard: React.FC = () => {
 
     try {
       const { data, error: rpcErr } = await supabase.rpc('handle_check_out', {
-        p_latitude: coords.latitude,
-        p_longitude: coords.longitude,
-        p_accuracy: coords.accuracy,
+        p_latitude: coords?.latitude ?? null,
+        p_longitude: coords?.longitude ?? null,
+        p_accuracy: coords?.accuracy ?? null,
       });
 
       if (rpcErr) {
@@ -236,6 +241,25 @@ export const TeacherDashboard: React.FC = () => {
     } finally {
       setIsSubmittingCheckout(false);
     }
+  };
+
+  const handleConfirmCheckoutStep = () => {
+    setIsCheckoutConfirmOpen(false);
+    if (GEOFENCE_CHECK_ENABLED) {
+      setIsCheckoutLocationOpen(true);
+    } else {
+      // Geofence disabled for now - checkout without GPS verification
+      void runCheckoutRPC(null);
+    }
+  };
+
+  const handleCheckoutLocationVerified = async (coords: {
+    latitude: number;
+    longitude: number;
+    accuracy: number;
+    distance: number;
+  }) => {
+    await runCheckoutRPC(coords);
   };
 
   const isCheckedIn = Boolean(todaySession?.check_in_at);
@@ -398,7 +422,9 @@ export const TeacherDashboard: React.FC = () => {
                 <span>Report on Duty</span>
               </button>
               <p className="mt-2 text-[11px] text-[#667085]">
-                Requires live camera selfie & school geofence verification within {geofenceRadius}m.
+                {GEOFENCE_CHECK_ENABLED
+                  ? `Requires live camera selfie & school geofence verification within ${geofenceRadius}m.`
+                  : 'Requires a live camera selfie — captured with your camera only (gallery uploads not allowed).'}
               </p>
             </div>
           ) : !isCheckedOut ? (
@@ -573,7 +599,9 @@ export const TeacherDashboard: React.FC = () => {
           <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-2xl border border-[#E5E7EB]">
             <h3 className="text-sm font-bold text-[#202124]">Confirm Check-Out</h3>
             <p className="mt-2 text-xs text-[#667085]">
-              Checking out will conclude your attendance session for today. Fresh GPS verification will verify you are still on school premises.
+              {GEOFENCE_CHECK_ENABLED
+                ? 'Checking out will conclude your attendance session for today. Fresh GPS verification will verify you are still on school premises.'
+                : 'Checking out will conclude your attendance session for today.'}
             </p>
             <div className="mt-4 flex justify-end gap-2">
               <button
@@ -586,7 +614,7 @@ export const TeacherDashboard: React.FC = () => {
                 onClick={handleConfirmCheckoutStep}
                 className="rounded-lg bg-[#C62828] px-4 py-1.5 text-xs font-bold text-white hover:bg-[#8E1B1B]"
               >
-                Verify & Check Out
+                {GEOFENCE_CHECK_ENABLED ? 'Verify & Check Out' : 'Check Out Now'}
               </button>
             </div>
           </div>
