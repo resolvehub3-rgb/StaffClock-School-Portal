@@ -112,22 +112,37 @@ export const Header: React.FC<HeaderProps> = ({ onOpenSupabaseConfig }) => {
             <span>{timeStr}</span>
           </div>
 
-          {/* Supabase status indicator button */}
+          {/* Supabase status indicator — icon only, animated, not clickable */}
           {onOpenSupabaseConfig && (
-            <button
-              onClick={onOpenSupabaseConfig}
-              className={`flex items-center gap-1 rounded-lg px-2.5 py-1 text-[11px] font-medium border transition ${
+            <div
+              role="status"
+              aria-label={isSupabaseConnected ? 'Supabase Connected' : 'Supabase Not Connected'}
+              title={isSupabaseConnected ? 'Supabase Connected' : 'Supabase Not Connected'}
+              className={`relative flex select-none items-center rounded-lg border px-2 py-1.5 cursor-default ${
                 isSupabaseConnected
-                  ? 'border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100'
-                  : 'border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100'
+                  ? 'border-emerald-200 bg-emerald-50'
+                  : 'border-amber-200 bg-amber-50'
               }`}
-              title="Supabase Database Connection"
             >
-              <Database className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">
-                {isSupabaseConnected ? 'Supabase Connected' : 'Connect Supabase'}
+              <Database
+                className={`w-3.5 h-3.5 ${
+                  isSupabaseConnected ? 'text-emerald-600' : 'text-amber-600'
+                }`}
+              />
+              {/* Live pulse animation */}
+              <span className="absolute -right-1 -top-1 flex h-2.5 w-2.5">
+                <span
+                  className={`absolute inline-flex h-full w-full animate-ping rounded-full opacity-75 ${
+                    isSupabaseConnected ? 'bg-emerald-400' : 'bg-amber-400'
+                  }`}
+                />
+                <span
+                  className={`relative inline-flex h-1.5 w-1.5 rounded-full ${
+                    isSupabaseConnected ? 'bg-emerald-500' : 'bg-amber-500'
+                  }`}
+                />
               </span>
-            </button>
+            </div>
           )}
 
           {/* In-app PWA install button */}

@@ -50,6 +50,9 @@ export function usePWAInstall() {
       setDeferredPrompt(null);
       return true;
     }
+    // Prompt dismissed - the event is consumed by the browser, so drop it
+    // and fall back to the step-by-step install guide.
+    setDeferredPrompt(null);
     return false;
   };
 

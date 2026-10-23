@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { getSupabase } from '../lib/supabase';
 import { TeacherInvitation, SchoolSettings } from '../types/database';
 import { ShieldCheck, CheckCircle2, AlertCircle, Key, Lock, ArrowRight, Loader2, School, User } from 'lucide-react';
+import { PWAInstallButton } from '../components/PWAInstallButton';
 
 interface TeacherActivationPageProps {
   initialToken?: string;
@@ -381,6 +382,11 @@ export const TeacherActivationPage: React.FC<TeacherActivationPageProps> = ({
               </div>
             </form>
           )}
+        </div>
+
+        {/* PWA install prompt for staff who haven't installed the app yet */}
+        <div className="mt-4 flex justify-center">
+          <PWAInstallButton />
         </div>
       </div>
     </div>

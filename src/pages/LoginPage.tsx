@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { School, Lock, Mail, ArrowRight, AlertCircle, Loader2, Key } from 'lucide-react';
+import { PWAInstallButton } from '../components/PWAInstallButton';
 
 interface LoginPageProps {
   onGoToActivation: () => void;
@@ -137,6 +138,11 @@ export const LoginPage: React.FC<LoginPageProps> = ({
               )}
             </div>
           </form>
+        </div>
+
+        {/* PWA install prompt for users who haven't installed the app yet */}
+        <div className="mt-4 flex justify-center">
+          <PWAInstallButton />
         </div>
       </div>
     </div>

@@ -4,6 +4,7 @@ import { SCHOOL_SETUP_FLAG_KEY } from '../context/AuthContext';
 import { friendlyGeolocationError } from '../utils/geofence';
 import { School, MapPin, Clock, ShieldCheck, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
 import { GeofenceMapPicker } from '../components/GeofenceMapPicker';
+import { PWAInstallButton } from '../components/PWAInstallButton';
 
 interface FirstRunSetupPageProps {
   onSetupComplete: () => void;
@@ -350,6 +351,11 @@ export const FirstRunSetupPage: React.FC<FirstRunSetupPageProps> = ({
             </button>
           </div>
         </form>
+      </div>
+
+      {/* PWA install prompt for first-time users who haven't installed the app yet */}
+      <div className="mt-4 flex justify-center">
+        <PWAInstallButton />
       </div>
     </div>
   );
