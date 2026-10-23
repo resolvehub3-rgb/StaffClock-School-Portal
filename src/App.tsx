@@ -13,7 +13,7 @@ import { TeacherActivationPage } from './pages/TeacherActivationPage';
 import { FirstRunSetupPage } from './pages/FirstRunSetupPage';
 import { TeacherDashboard } from './pages/TeacherDashboard';
 import { AdminDashboard } from './pages/AdminDashboard';
-import { HeadmasterDashboard } from './pages/HeadmasterDashboard';
+import type { UserRole } from './types/database';
 import { School, Loader2 } from 'lucide-react';
 
 function AppContent() {
@@ -109,17 +109,18 @@ function AppContent() {
   }
 
   // Authenticated Dashboard Router based on verified Supabase profile role / activeRoleView
-  const currentRole = viewParam || activeRoleView || role || 'owner';
+  // ('admin' is a legacy URL alias for the owner portal)
+  const currentRole = (viewParam || activeRoleView || role || 'owner') as UserRole | 'admin';
   const isOwnerOrAdmin = currentRole === 'owner' || currentRole === 'admin';
 
   return (
     <div className="min-h-screen bg-[#F8F8F8] text-[#202124]">
       <Header onOpenSupabaseConfig={() => setIsSupabaseModalOpen(true)} />
 
-      {isOwnerOrAdmin ? (
-        <AdminDashboard />
-      ) : currentRole === 'headmaster' || currentRole === 'assistant_headmaster' ? (
-        <HeadmasterDashboard />
+      {/* Owner/admin and leadership (headmaster, assistant headmaster) share the
+          full dashboard interface; leadership is rendered read-only via viewingRole */}
+      {isOwnerOrAdmin || currentRole === 'headmaster' || currentRole === 'assistant_headmaster' ? (
+        <AdminDashboard viewingRole={currentRole === 'admin' ? 'owner' : currentRole} />
       ) : (
         <TeacherDashboard />
       )}

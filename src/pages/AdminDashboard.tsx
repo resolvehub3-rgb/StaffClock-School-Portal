@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { getSupabase } from '../lib/supabase';
-import { AttendanceSession, Teacher, SchoolClass, AuditLogItem, TeacherInvitation } from '../types/database';
+import { AttendanceSession, Teacher, SchoolClass, AuditLogItem, TeacherInvitation, UserRole } from '../types/database';
 import { calculateAttendanceMetrics, generateCsvContent, AttendanceRecordExport } from '../utils/reports';
 import { friendlyGeolocationError } from '../utils/geofence';
 import { InviteTeacherModal } from '../components/InviteTeacherModal';
@@ -58,8 +58,15 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'audit', label: 'Audit Trail', icon: ShieldCheck },
 ];
 
-export const AdminDashboard: React.FC = () => {
+interface AdminDashboardProps {
+  /** Whose portal this is. Owner/admin gets full controls; headmaster and
+      assistant_headmaster get the same dashboard interface read-only. */
+  viewingRole?: UserRole;
+}
+
+export const AdminDashboard: React.FC<AdminDashboardProps> = ({ viewingRole = 'owner' }) => {
   const { schoolSettings, updateSchoolSettings } = useAuth();
+  const isLeadership = viewingRole === 'headmaster' || viewingRole === 'assistant_headmaster';
   const supabase = getSupabase();
 
   const [activeTab, setActiveTab] = useState<AdminTabId>('overview');
@@ -886,13 +893,15 @@ export const AdminDashboard: React.FC = () => {
                                     <Eye className="w-4 h-4" />
                                   </button>
                                 )}
-                                <button
-                                  onClick={() => setCorrectionSession(session)}
-                                  className="p-1 rounded text-[#667085] hover:text-[#202124] hover:bg-gray-100"
-                                  title="Audited Admin Correction"
-                                >
-                                  <Edit className="w-4 h-4" />
-                                </button>
+                                {!isLeadership && (
+                                  <button
+                                    onClick={() => setCorrectionSession(session)}
+                                    className="p-1 rounded text-[#667085] hover:text-[#202124] hover:bg-gray-100"
+                                    title="Audited Admin Correction"
+                                  >
+                                    <Edit className="w-4 h-4" />
+                                  </button>
+                                )}
                               </div>
                             </td>
                           </tr>
@@ -913,16 +922,20 @@ export const AdminDashboard: React.FC = () => {
               <div>
                 <h2 className="text-base font-bold text-[#202124]">Teacher Staff Registry</h2>
                 <p className="text-xs text-[#667085]">
-                  Invite teachers using their email and generate manual activation links.
+                  {isLeadership
+                    ? 'Read-only view of all teaching staff and their class assignments.'
+                    : 'Invite teachers using their email and generate manual activation links.'}
                 </p>
               </div>
-              <button
-                onClick={() => setIsInviteModalOpen(true)}
-                className="flex items-center gap-1.5 rounded-lg bg-[#C62828] px-3.5 py-2 text-xs font-bold text-white shadow-xs hover:bg-[#8E1B1B]"
-              >
-                <Plus className="w-4 h-4" />
-                <span>Invite Teacher / Staff</span>
-              </button>
+              {!isLeadership && (
+                <button
+                  onClick={() => setIsInviteModalOpen(true)}
+                  className="flex items-center gap-1.5 rounded-lg bg-[#C62828] px-3.5 py-2 text-xs font-bold text-white shadow-xs hover:bg-[#8E1B1B]"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Invite Teacher / Staff</span>
+                </button>
+              )}
             </div>
 
             <div className="rounded-2xl bg-white border border-[#E5E7EB] shadow-xs overflow-hidden">
@@ -930,7 +943,9 @@ export const AdminDashboard: React.FC = () => {
                 <div className="py-12 text-center text-xs text-[#667085]">
                   <Users className="mx-auto w-8 h-8 text-gray-300 mb-2" />
                   <p className="font-bold text-[#202124]">No teachers enrolled yet.</p>
-                  <p className="mt-1">Click "Invite Teacher / Staff" above to invite your first teacher.</p>
+                  {!isLeadership && (
+                    <p className="mt-1">Click "Invite Teacher / Staff" above to invite your first teacher.</p>
+                  )}
                 </div>
               ) : (
                 <div className="overflow-x-auto">
@@ -974,27 +989,31 @@ export const AdminDashboard: React.FC = () => {
                             </span>
                           </td>
                           <td className="py-3 px-4 text-right">
-                            <button
-                              onClick={() => handleToggleTeacherStatus(teacher)}
-                              className={`p-1 rounded text-xs font-semibold ${
-                                teacher.employment_status === 'active'
-                                  ? 'text-amber-700 hover:bg-amber-50'
-                                  : 'text-emerald-700 hover:bg-emerald-50'
-                              }`}
-                              title={teacher.employment_status === 'active' ? 'Deactivate staff' : 'Activate staff'}
-                            >
-                              {teacher.employment_status === 'active' ? (
-                                <UserX className="w-4 h-4" />
-                              ) : (
-                                <UserCheck className="w-4 h-4" />
-                              )}
-                            </button>
+                            {isLeadership ? (
+                              <span className="text-[#98A2B3]" title="Staff status is managed by the School Owner">—</span>
+                            ) : (
+                              <button
+                                onClick={() => handleToggleTeacherStatus(teacher)}
+                                className={`p-1 rounded text-xs font-semibold ${
+                                  teacher.employment_status === 'active'
+                                    ? 'text-amber-700 hover:bg-amber-50'
+                                    : 'text-emerald-700 hover:bg-emerald-50'
+                                }`}
+                                title={teacher.employment_status === 'active' ? 'Deactivate staff' : 'Activate staff'}
+                              >
+                                {teacher.employment_status === 'active' ? (
+                                  <UserX className="w-4 h-4" />
+                                ) : (
+                                  <UserCheck className="w-4 h-4" />
+                                )}
+                              </button>
+                            )}
                           </td>
                         </tr>
                       ))}
 
-                      {/* Pending invitations: sent but not yet activated */}
-                      {pendingInvites.map((invite) => (
+                      {/* Pending invitations: sent but not yet activated (owner-only) */}
+                      {!isLeadership && pendingInvites.map((invite) => (
                         <tr key={`invite-${invite.id}`} className="bg-amber-50/50 hover:bg-amber-50">
                           <td className="py-3 px-4 font-bold text-[#202124]">
                             {invite.full_name}
@@ -1052,16 +1071,20 @@ export const AdminDashboard: React.FC = () => {
               <div>
                 <h2 className="text-base font-bold text-[#202124]">School Classes</h2>
                 <p className="text-xs text-[#667085]">
-                  Manage school classes and assign primary classroom responsibilities.
+                  {isLeadership
+                    ? 'View school classes and their assigned teachers.'
+                    : 'Manage school classes and assign primary classroom responsibilities.'}
                 </p>
               </div>
-              <button
-                onClick={() => setIsAddClassOpen(true)}
-                className="flex items-center gap-1.5 rounded-lg bg-[#C62828] px-3.5 py-2 text-xs font-bold text-white shadow-xs hover:bg-[#8E1B1B]"
-              >
-                <Plus className="w-4 h-4" />
-                <span>Create New Class</span>
-              </button>
+              {!isLeadership && (
+                <button
+                  onClick={() => setIsAddClassOpen(true)}
+                  className="flex items-center gap-1.5 rounded-lg bg-[#C62828] px-3.5 py-2 text-xs font-bold text-white shadow-xs hover:bg-[#8E1B1B]"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Create New Class</span>
+                </button>
+              )}
             </div>
 
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -1205,9 +1228,18 @@ export const AdminDashboard: React.FC = () => {
             <div>
               <h2 className="text-base font-bold text-[#202124]">School Operating Settings</h2>
               <p className="text-xs text-[#667085]">
-                Configure timetable, lateness grace period, and geofence coordinates.
+                {isLeadership
+                  ? 'View the school timetable, lateness grace period, and geofence coordinates.'
+                  : 'Configure timetable, lateness grace period, and geofence coordinates.'}
               </p>
             </div>
+
+            {isLeadership && (
+              <div className="rounded-xl bg-blue-50 border border-blue-200 p-3 text-xs font-semibold text-blue-800 flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4 text-blue-600" />
+                <span>View only — school settings are managed by the School Owner.</span>
+              </div>
+            )}
 
             {settingsSavedToast && (
               <div className="rounded-xl bg-emerald-50 border border-emerald-300 p-3 text-xs font-semibold text-emerald-900 flex items-center gap-2">
@@ -1217,6 +1249,7 @@ export const AdminDashboard: React.FC = () => {
             )}
 
             <form onSubmit={handleSaveSettings} className="rounded-2xl bg-white border border-[#E5E7EB] p-5 shadow-xs space-y-4 text-xs">
+              <fieldset disabled={isLeadership} className={isLeadership ? 'space-y-4 opacity-75' : 'contents'}>
               <div>
                 <label className="block font-semibold text-[#202124] mb-1">Official School Name</label>
                 <input
@@ -1353,15 +1386,18 @@ export const AdminDashboard: React.FC = () => {
                 />
               </div>
 
-              <div className="flex justify-end pt-2 border-t border-[#E5E7EB]">
-                <button
-                  type="submit"
-                  disabled={isSavingSettings}
-                  className="rounded-lg bg-[#C62828] px-5 py-2 font-bold text-white hover:bg-[#8E1B1B] shadow-xs disabled:opacity-50"
-                >
-                  {isSavingSettings ? 'Saving...' : 'Save School Settings'}
-                </button>
-              </div>
+              {!isLeadership && (
+                <div className="flex justify-end pt-2 border-t border-[#E5E7EB]">
+                  <button
+                    type="submit"
+                    disabled={isSavingSettings}
+                    className="rounded-lg bg-[#C62828] px-5 py-2 font-bold text-white hover:bg-[#8E1B1B] shadow-xs disabled:opacity-50"
+                  >
+                    {isSavingSettings ? 'Saving...' : 'Save School Settings'}
+                  </button>
+                </div>
+              )}
+              </fieldset>
             </form>
           </div>
         )}
@@ -1434,7 +1470,7 @@ export const AdminDashboard: React.FC = () => {
           />
           <div className="absolute left-0 top-0 h-full w-72 max-w-[85vw] overflow-y-auto bg-white p-4 shadow-2xl">
             <div className="mb-3 flex items-center justify-between border-b border-[#E5E7EB] pb-3">
-              <span className="text-sm font-bold text-[#202124]">Admin Menu</span>
+              <span className="text-sm font-bold text-[#202124]">Dashboard Menu</span>
               <button
                 onClick={() => setIsSidebarOpen(false)}
                 className="rounded-lg p-1.5 text-[#667085] hover:bg-gray-100 hover:text-[#202124]"
